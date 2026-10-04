@@ -28,6 +28,19 @@ iPhone Safari:
 
 OptiFrame includes a web app manifest, app icons, iOS home-screen tags, and a service worker, so it can be installed like a PWA.
 
+## Fast Deployment
+
+Recommended for the hackathon: deploy as one Docker web service on Render.
+
+1. Push the latest commits to GitHub.
+2. Go to Render and create a new **Blueprint** or **Web Service** from `https://github.com/essamamiri/OptiFrame`.
+3. Use the included `render.yaml` / `Dockerfile`.
+4. Wait for the build to finish.
+5. Open the HTTPS URL Render gives you.
+6. Add that URL to this README and generate a QR code for the demo.
+
+The Docker deployment builds the React frontend, copies it into the Python service, and serves both the mobile app and `/api/*` from the same HTTPS domain.
+
 ## What It Does
 
 - Calibrates photos from a 4-marker ArUco capture sheet.

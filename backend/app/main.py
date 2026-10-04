@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 import warnings
@@ -12,6 +13,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from pillow_heif import register_heif_opener
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
+from starlette.staticfiles import StaticFiles
 
 from .calibration import CalibrationReady, CalibrationRetry, calibrate
 from .aruco_sheet import SheetReady, calibrate_sheet
@@ -208,3 +210,8 @@ def calibrate_with_supported_references(image: Image.Image) -> CalibrationReady 
             preview_data_url=sheet.preview_data_url,
         )
     return calibrate(image)
+
+
+static_dir = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if static_dir.exists():
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
