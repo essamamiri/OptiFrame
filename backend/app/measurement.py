@@ -314,15 +314,69 @@ def _sheet_dark_rim_candidates(rectified: np.ndarray, calibration: CalibrationRe
     return sorted(candidates, key=lambda candidate: candidate.score, reverse=True)
 
 
+def _resample_closed(points: np.ndarray, count: int) -> np.ndarray:
+    polygon = points.reshape(-1, 2).astype(np.float32)
+    closed = np.vstack([polygon, polygon[0]])
+    lengths = np.linalg.norm(np.diff(closed, axis=0), axis=1)
+    perimeter = float(lengths.sum())
+    if perimeter <= 0:
+        return polygon
+    targets = np.linspace(0, perimeter, count, endpoint=False)
+    cumulative = np.concatenate([[0.0], np.cumsum(lengths)])
+    sampled: list[np.ndarray] = []
+    edge = 0
+    for target in targets:
+        while edge < len(lengths) - 1 and cumulative[edge + 1] < target:
+            edge += 1
+        span = max(float(lengths[edge]), 1e-6)
+        t = (target - cumulative[edge]) / span
+        sampled.append(closed[edge] * (1 - t) + closed[edge + 1] * t)
+    return np.asarray(sampled, dtype=np.float32)
+
+
+def _rounded_outer_contour(contour_px: np.ndarray, calibration: CalibrationReady) -> np.ndarray:
+    # The raw edge detector can see glare and internal reflection lines. The
+    # usable lens shape for SVG/STL is the smooth outside envelope, so use the
+    # hull as a robust envelope and then smooth it without reducing it to a
+    # faceted low-point polygon.
+    hull = cv2.convexHull(contour_px.astype(np.float32)).reshape(-1, 2)
+    if len(hull) < 3:
+        return contour_px.reshape(-1, 2).astype(np.float32)
+
+    target_count = 160
+    original_min = hull.min(axis=0)
+    original_max = hull.max(axis=0)
+    original_center = (original_min + original_max) / 2
+    original_span = original_max - original_min
+
+    rounded = _resample_closed(hull, target_count)
+    # Circular fairing: enough to remove saw teeth and polygon corners, not
+    # enough to change the measured boxing dimensions.
+    for _ in range(18):
+        rounded = (
+            np.roll(rounded, 2, axis=0)
+            + np.roll(rounded, 1, axis=0) * 3
+            + rounded * 4
+            + np.roll(rounded, -1, axis=0) * 3
+            + np.roll(rounded, -2, axis=0)
+        ) / 12.0
+
+    rounded_min = rounded.min(axis=0)
+    rounded_max = rounded.max(axis=0)
+    rounded_center = (rounded_min + rounded_max) / 2
+    rounded_span = rounded_max - rounded_min
+    if np.all(original_span > 0) and np.all(rounded_span > 0):
+        rounded = (rounded - rounded_center) * (original_span / rounded_span) + original_center
+
+    # Keep point spacing around 0.5 mm or better for clean SVG/STL curves.
+    spacing_count = max(target_count, int(cv2.arcLength(hull.reshape(-1, 1, 2), True) / max(2.0, 0.5 / calibration.millimetres_per_pixel)))
+    if spacing_count > target_count:
+        rounded = _resample_closed(rounded, min(spacing_count, 256))
+    return rounded.astype(np.float32)
+
+
 def _simplify_metric(contour_px: np.ndarray, calibration: CalibrationReady) -> tuple[np.ndarray, np.ndarray]:
-    # The edge detector can pick up glare lines and small inner reflections on
-    # transparent lenses. For measurement/CAD we want the usable outside lens
-    # boundary, not every pixel-scale wiggle, so export a clean outer hull.
-    hull_px = cv2.convexHull(contour_px.astype(np.float32))
-    epsilon_px = max(.75, .45 / calibration.millimetres_per_pixel)
-    simplified_px = cv2.approxPolyDP(hull_px, epsilon_px, True).reshape(-1, 2).astype(np.float32)
-    if len(simplified_px) < 8 and len(hull_px) >= 8:
-        simplified_px = hull_px.reshape(-1, 2).astype(np.float32)
+    simplified_px = _rounded_outer_contour(contour_px, calibration)
     rectified_to_mm = np.asarray(calibration.source_to_card_mm) @ np.linalg.inv(
         np.asarray(calibration.source_to_rectified)
     )

@@ -30,6 +30,18 @@ def test_loose_lens_measurements_across_pose(angle, perspective):
     assert np.isfinite(contour).all()
 
 
+def test_exported_lens_contour_is_smooth_enough_for_cad():
+    image, _, _ = scene()
+    calibration = calibrate(image)
+    result = measure_lens(image, calibration, "loose")
+    assert isinstance(result, LensMeasurement), result
+    contour = np.asarray(result.contour_mm)
+    assert len(contour) >= 120
+    vectors = np.roll(contour, -1, axis=0) - contour
+    segment_lengths = np.linalg.norm(vectors, axis=1)
+    assert float(np.percentile(segment_lengths, 95)) < 2.0
+
+
 @pytest.mark.parametrize("angle,perspective", [(0, 0), (25, 1), (90, 2), (335, 2)])
 def test_framed_mode_offsets_outer_contour_inward(angle, perspective):
     image, _, _ = scene(angle, perspective, lens_width=12)

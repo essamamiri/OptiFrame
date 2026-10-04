@@ -41,9 +41,14 @@ def _resample(points: list[tuple[float, float]], count: int = POINT_COUNT) -> np
     polygon = np.asarray(points, dtype=np.float32)
     if len(polygon) < 3:
         raise ValueError("Contour needs at least three points.")
-    polygon = _convex_hull(polygon)
-    if len(polygon) < 3:
-        raise ValueError("Contour needs at least three non-collinear points.")
+    # Use a hull only for obviously noisy/highly concave incoming contours.
+    # Normal measurements already arrive as a smooth outside lens envelope.
+    hull = _convex_hull(polygon)
+    if len(hull) >= 3:
+        area = abs(_area(polygon))
+        hull_area = abs(_area(hull))
+        if hull_area > 0 and area / hull_area < 0.88:
+            polygon = hull
     if _area(polygon) < 0:
         polygon = polygon[::-1]
     closed = np.vstack([polygon, polygon[0]])
