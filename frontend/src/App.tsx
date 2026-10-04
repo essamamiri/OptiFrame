@@ -80,6 +80,13 @@ function App() {
     averageConfidence: (leftMeasurement.confidence + rightMeasurement.confidence) / 2,
     printableWidth: leftMeasurement.width_a_mm + rightMeasurement.width_a_mm + bridgeWidth + rimWidth * 4 + 20,
   } : null;
+  const deliveryChecks = [
+    { label: "Mobile photo capture", done: true },
+    { label: "Reference correction", done: calibration?.status === "calibrated" },
+    { label: "A / B / perimeter", done: measurement?.status === "measured" },
+    { label: "1:1 SVG export", done: measurement?.status === "measured" },
+    { label: "Two-lens STL", done: Boolean(leftMeasurement && rightMeasurement) },
+  ];
 
   const previewUrl = useMemo(
     () => (imageFile ? URL.createObjectURL(imageFile) : ""),
@@ -238,7 +245,7 @@ function App() {
             <li>Capture</li>
             <li className="active">Measure</li>
             <li>Review</li>
-            <li>Save outline</li>
+            <li>STL</li>
           </ol>
         </section>
 
@@ -246,6 +253,21 @@ function App() {
           <div className="eyebrow"><ScanLine size={14} /> Precision lens workspace</div>
           <h1>Old lenses.<br /><span>New possibilities.</span></h1>
           <p>Choose a lens. Take a photo. Reveal its shape and dimensions.</p>
+        </section>
+
+        <section className="demo-status" aria-label="Challenge deliverables">
+          <div>
+            <span className="status-kicker">Consignes check</span>
+            <strong>Photo {"->"} millimetres {"->"} STL</strong>
+          </div>
+          <ul>
+            {deliveryChecks.map(item => (
+              <li key={item.label} className={item.done ? "done" : ""}>
+                <Check size={15} />
+                {item.label}
+              </li>
+            ))}
+          </ul>
         </section>
 
         <section className="capture-card">
@@ -384,6 +406,30 @@ function App() {
                 <div><dt>Preview scale</dt><dd>{calibration.millimetres_per_pixel.toFixed(4)} mm / pixel</dd></div>
                 {measurement?.status === "measured" && <div><dt>Method</dt><dd>{measurement.method === "ml_lens_mask" ? "ML lens mask" : "Direct detected contour"}</dd></div>}
               </dl>
+              {measurement?.status === "measured" && (
+                <div className="pipeline-view" aria-label="Step by step image pipeline">
+                  <div>
+                    <span>1</span>
+                    <strong>Reference</strong>
+                    <small>{calibration.reference_label}</small>
+                  </div>
+                  <div>
+                    <span>2</span>
+                    <strong>Redressed</strong>
+                    <small>{calibration.millimetres_per_pixel.toFixed(4)} mm / px</small>
+                  </div>
+                  <div>
+                    <span>3</span>
+                    <strong>Contour</strong>
+                    <small>{measurement.contour_mm.length} points</small>
+                  </div>
+                  <div>
+                    <span>4</span>
+                    <strong>CAD ready</strong>
+                    <small>{measurement.width_a_mm.toFixed(1)} × {measurement.height_b_mm.toFixed(1)} mm</small>
+                  </div>
+                </div>
+              )}
               <p className="calibration-note">
                 {measurement?.status === "measured"
                   ? "Confirm the orange contour follows the loose lens edge. Real-photo accuracy has not been validated yet."
@@ -411,27 +457,47 @@ function App() {
         {leftMeasurement && rightMeasurement && (
           <section className="frame-panel" aria-label="Frame export">
             {framePreview && (
-              <svg className="frame-preview" viewBox="-62 -34 124 68" role="img" aria-label="Top view preview of generated frame">
-                <line className="frame-bridge" x1={-framePreview.bridge / 2} y1="0" x2={framePreview.bridge / 2} y2="0" />
-                <line className="frame-tab" x1={-(framePreview.bridge / 2 + framePreview.leftWidth + 10)} y1="0" x2={-(framePreview.bridge / 2 + framePreview.leftWidth / 2 + 1)} y2="0" />
-                <line className="frame-tab" x1={framePreview.bridge / 2 + framePreview.rightWidth / 2 + 1} y1="0" x2={framePreview.bridge / 2 + framePreview.rightWidth + 10} y2="0" />
-                <path
-                  className="frame-rim"
-                  d={contourPath(offsetContour(framePreview.leftPath, framePreview.rim + framePreview.clearance), -(framePreview.bridge / 2 + framePreview.leftWidth / 2), 0)}
-                />
-                <path
-                  className="frame-opening"
-                  d={contourPath(offsetContour(framePreview.leftPath, framePreview.clearance), -(framePreview.bridge / 2 + framePreview.leftWidth / 2), 0)}
-                />
-                <path
-                  className="frame-rim"
-                  d={contourPath(offsetContour(framePreview.rightPath, framePreview.rim + framePreview.clearance), framePreview.bridge / 2 + framePreview.rightWidth / 2, 0)}
-                />
-                <path
-                  className="frame-opening"
-                  d={contourPath(offsetContour(framePreview.rightPath, framePreview.clearance), framePreview.bridge / 2 + framePreview.rightWidth / 2, 0)}
-                />
-              </svg>
+              <div className="frame-previews">
+                <svg className="frame-preview" viewBox="-62 -34 124 68" role="img" aria-label="Top view preview of generated frame">
+                  <line className="frame-bridge" x1={-framePreview.bridge / 2} y1="0" x2={framePreview.bridge / 2} y2="0" />
+                  <line className="frame-tab" x1={-(framePreview.bridge / 2 + framePreview.leftWidth + 10)} y1="0" x2={-(framePreview.bridge / 2 + framePreview.leftWidth / 2 + 1)} y2="0" />
+                  <line className="frame-tab" x1={framePreview.bridge / 2 + framePreview.rightWidth / 2 + 1} y1="0" x2={framePreview.bridge / 2 + framePreview.rightWidth + 10} y2="0" />
+                  <path
+                    className="frame-rim"
+                    d={contourPath(offsetContour(framePreview.leftPath, framePreview.rim + framePreview.clearance), -(framePreview.bridge / 2 + framePreview.leftWidth / 2), 0)}
+                  />
+                  <path
+                    className="frame-opening"
+                    d={contourPath(offsetContour(framePreview.leftPath, framePreview.clearance), -(framePreview.bridge / 2 + framePreview.leftWidth / 2), 0)}
+                  />
+                  <path
+                    className="frame-rim"
+                    d={contourPath(offsetContour(framePreview.rightPath, framePreview.rim + framePreview.clearance), framePreview.bridge / 2 + framePreview.rightWidth / 2, 0)}
+                  />
+                  <path
+                    className="frame-opening"
+                    d={contourPath(offsetContour(framePreview.rightPath, framePreview.clearance), framePreview.bridge / 2 + framePreview.rightWidth / 2, 0)}
+                  />
+                </svg>
+                <svg className="frame-preview frame-preview-3d" viewBox="-62 -44 124 88" role="img" aria-label="Angled 3D preview of generated frame">
+                  <g className="frame-shadow" transform="translate(5 9) scale(1 .72)">
+                    <line className="frame-bridge" x1={-framePreview.bridge / 2} y1="0" x2={framePreview.bridge / 2} y2="0" />
+                    <line className="frame-tab" x1={-(framePreview.bridge / 2 + framePreview.leftWidth + 10)} y1="0" x2={-(framePreview.bridge / 2 + framePreview.leftWidth / 2 + 1)} y2="0" />
+                    <line className="frame-tab" x1={framePreview.bridge / 2 + framePreview.rightWidth / 2 + 1} y1="0" x2={framePreview.bridge / 2 + framePreview.rightWidth + 10} y2="0" />
+                    <path className="frame-rim" d={contourPath(offsetContour(framePreview.leftPath, framePreview.rim + framePreview.clearance), -(framePreview.bridge / 2 + framePreview.leftWidth / 2), 0)} />
+                    <path className="frame-rim" d={contourPath(offsetContour(framePreview.rightPath, framePreview.rim + framePreview.clearance), framePreview.bridge / 2 + framePreview.rightWidth / 2, 0)} />
+                  </g>
+                  <g transform="translate(0 -2) scale(1 .72)">
+                    <line className="frame-bridge" x1={-framePreview.bridge / 2} y1="0" x2={framePreview.bridge / 2} y2="0" />
+                    <line className="frame-tab" x1={-(framePreview.bridge / 2 + framePreview.leftWidth + 10)} y1="0" x2={-(framePreview.bridge / 2 + framePreview.leftWidth / 2 + 1)} y2="0" />
+                    <line className="frame-tab" x1={framePreview.bridge / 2 + framePreview.rightWidth / 2 + 1} y1="0" x2={framePreview.bridge / 2 + framePreview.rightWidth + 10} y2="0" />
+                    <path className="frame-rim" d={contourPath(offsetContour(framePreview.leftPath, framePreview.rim + framePreview.clearance), -(framePreview.bridge / 2 + framePreview.leftWidth / 2), 0)} />
+                    <path className="frame-opening" d={contourPath(offsetContour(framePreview.leftPath, framePreview.clearance), -(framePreview.bridge / 2 + framePreview.leftWidth / 2), 0)} />
+                    <path className="frame-rim" d={contourPath(offsetContour(framePreview.rightPath, framePreview.rim + framePreview.clearance), framePreview.bridge / 2 + framePreview.rightWidth / 2, 0)} />
+                    <path className="frame-opening" d={contourPath(offsetContour(framePreview.rightPath, framePreview.clearance), framePreview.bridge / 2 + framePreview.rightWidth / 2, 0)} />
+                  </g>
+                </svg>
+              </div>
             )}
             <div className="cad-controls">
               <label>
