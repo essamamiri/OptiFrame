@@ -75,6 +75,13 @@ def _normalize(points: np.ndarray) -> np.ndarray:
     return points - (minimum + maximum) / 2
 
 
+def _landscape(points: np.ndarray) -> np.ndarray:
+    span = points.max(axis=0) - points.min(axis=0)
+    if span[1] > span[0]:
+        points = np.column_stack([points[:, 1], -points[:, 0]]).astype(np.float32)
+    return _normalize(points)
+
+
 def _radial_offset(points: np.ndarray, offset: float) -> np.ndarray:
     center = points.mean(axis=0)
     vectors = points - center
@@ -85,7 +92,7 @@ def _radial_offset(points: np.ndarray, offset: float) -> np.ndarray:
 
 def _smooth_lens(points: list[tuple[float, float]], clearance_mm: float, count: int = POINT_COUNT) -> np.ndarray:
     """Preserve measured lens shape, but remove pixel-scale contour noise."""
-    sampled = _normalize(_resample(points, count))
+    sampled = _landscape(_resample(points, count))
     original_span = sampled.max(axis=0) - sampled.min(axis=0)
     smoothed = sampled.copy()
     for _ in range(10):
@@ -96,7 +103,7 @@ def _smooth_lens(points: list[tuple[float, float]], clearance_mm: float, count: 
             + np.roll(smoothed, -1, axis=0) * 2
             + np.roll(smoothed, -2, axis=0)
         ) / 9.0
-    smoothed = _normalize(smoothed)
+    smoothed = _landscape(smoothed)
     smooth_span = smoothed.max(axis=0) - smoothed.min(axis=0)
     if np.any(original_span <= 0) or np.any(smooth_span <= 0):
         raise ValueError("Contour dimensions must be positive.")

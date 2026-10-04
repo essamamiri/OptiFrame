@@ -1,4 +1,5 @@
 from io import BytesIO
+import re
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -124,6 +125,13 @@ def test_frame_stl_endpoint_returns_downloadable_mesh():
     assert text.startswith("solid optiframe")
     assert text.endswith("endsolid optiframe\n")
     assert text.count("facet normal") > 100
+    vertices = [
+        tuple(map(float, match.groups()))
+        for match in re.finditer(r"vertex ([-0-9.]+) ([-0-9.]+) ([-0-9.]+)", text)
+    ]
+    xs = [vertex[0] for vertex in vertices]
+    ys = [vertex[1] for vertex in vertices]
+    assert max(xs) - min(xs) > max(ys) - min(ys)
 
 
 def test_streamed_body_limit_before_multipart_parsing():

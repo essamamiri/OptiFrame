@@ -29,6 +29,16 @@ function normalizeContour(points: [number, number][]) {
   return points.map(([x, y]) => [x - cx, y - cy] as [number, number]);
 }
 
+function landscapeContour(points: [number, number][]) {
+  const normalized = normalizeContour(points);
+  const xs = normalized.map(point => point[0]);
+  const ys = normalized.map(point => point[1]);
+  const width = Math.max(...xs) - Math.min(...xs);
+  const height = Math.max(...ys) - Math.min(...ys);
+  if (height <= width) return normalized;
+  return normalizeContour(normalized.map(([x, y]) => [y, -x] as [number, number]));
+}
+
 function offsetContour(points: [number, number][], offset: number) {
   return points.map(([x, y]) => {
     const length = Math.hypot(x, y) || 1;
@@ -73,8 +83,8 @@ function App() {
     rim: rimWidth,
     clearance,
     bridgeY: -((leftMeasurement.height_b_mm + rightMeasurement.height_b_mm) / 2) * 0.23,
-    leftPath: normalizeContour(leftMeasurement.contour_mm),
-    rightPath: normalizeContour(rightMeasurement.contour_mm),
+    leftPath: landscapeContour(leftMeasurement.contour_mm),
+    rightPath: landscapeContour(rightMeasurement.contour_mm),
   } : null;
   const fitReport = leftMeasurement && rightMeasurement ? {
     symmetryDelta: Math.abs(leftMeasurement.width_a_mm - rightMeasurement.width_a_mm) + Math.abs(leftMeasurement.height_b_mm - rightMeasurement.height_b_mm),
@@ -199,8 +209,8 @@ function App() {
 
   function downloadFitCheck() {
     if (!leftMeasurement || !rightMeasurement) return;
-    const left = normalizeContour(leftMeasurement.contour_mm);
-    const right = normalizeContour(rightMeasurement.contour_mm);
+    const left = landscapeContour(leftMeasurement.contour_mm);
+    const right = landscapeContour(rightMeasurement.contour_mm);
     const leftOpening = offsetContour(left, clearance);
     const rightOpening = offsetContour(right, clearance);
     const leftX = leftMeasurement.width_a_mm / 2 + rimWidth + 4;
