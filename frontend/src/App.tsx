@@ -31,12 +31,31 @@ function normalizeContour(points: [number, number][]) {
 
 function landscapeContour(points: [number, number][]) {
   const normalized = normalizeContour(points);
-  const xs = normalized.map(point => point[0]);
-  const ys = normalized.map(point => point[1]);
-  const width = Math.max(...xs) - Math.min(...xs);
-  const height = Math.max(...ys) - Math.min(...ys);
-  if (height <= width) return normalized;
-  return normalizeContour(normalized.map(([x, y]) => [y, -x] as [number, number]));
+  if (normalized.length < 3) return normalized;
+  const meanX = normalized.reduce((sum, [x]) => sum + x, 0) / normalized.length;
+  const meanY = normalized.reduce((sum, [, y]) => sum + y, 0) / normalized.length;
+  let xx = 0, xy = 0, yy = 0;
+  for (const [x, y] of normalized) {
+    const dx = x - meanX;
+    const dy = y - meanY;
+    xx += dx * dx;
+    xy += dx * dy;
+    yy += dy * dy;
+  }
+  const angle = 0.5 * Math.atan2(2 * xy, xx - yy);
+  const cos = Math.cos(-angle);
+  const sin = Math.sin(-angle);
+  let leveled = normalized.map(([x, y]) => {
+    const dx = x - meanX;
+    const dy = y - meanY;
+    return [dx * cos - dy * sin, dx * sin + dy * cos] as [number, number];
+  });
+  let xs = leveled.map(point => point[0]);
+  let ys = leveled.map(point => point[1]);
+  if (Math.max(...ys) - Math.min(...ys) > Math.max(...xs) - Math.min(...xs)) {
+    leveled = leveled.map(([x, y]) => [y, -x] as [number, number]);
+  }
+  return normalizeContour(leveled);
 }
 
 function offsetContour(points: [number, number][], offset: number) {

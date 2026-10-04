@@ -76,10 +76,21 @@ def _normalize(points: np.ndarray) -> np.ndarray:
 
 
 def _landscape(points: np.ndarray) -> np.ndarray:
+    centered = points - points.mean(axis=0)
+    if len(centered) >= 3:
+        covariance = np.cov(centered.T)
+        values, vectors = np.linalg.eigh(covariance)
+        major = vectors[:, int(np.argmax(values))]
+        angle = np.arctan2(float(major[1]), float(major[0]))
+        cos_a, sin_a = np.cos(-angle), np.sin(-angle)
+        rotation = np.array([[cos_a, -sin_a], [sin_a, cos_a]], dtype=np.float32)
+        points = centered @ rotation.T
+    else:
+        points = centered
     span = points.max(axis=0) - points.min(axis=0)
     if span[1] > span[0]:
         points = np.column_stack([points[:, 1], -points[:, 0]]).astype(np.float32)
-    return _normalize(points)
+    return _normalize(points.astype(np.float32))
 
 
 def _radial_offset(points: np.ndarray, offset: float) -> np.ndarray:
