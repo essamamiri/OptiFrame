@@ -201,6 +201,13 @@ def _capsule(x0: float, x1: float, y: float, radius: float, count: int = 24) -> 
     return np.vstack([right_arc, left_arc]).astype(np.float32)
 
 
+def _edge_x_at_y(points: np.ndarray, y: float, side: str, band: float) -> float:
+    nearby = points[np.abs(points[:, 1] - y) <= band]
+    if len(nearby) < 2:
+        nearby = points
+    return float(nearby[:, 0].max() if side == "right" else nearby[:, 0].min())
+
+
 def generate_frame_stl(
     left_contour_mm: list[tuple[float, float]],
     right_contour_mm: list[tuple[float, float]],
@@ -229,7 +236,12 @@ def generate_frame_stl(
 
     bridge_radius = max(2.8, rim_width_mm * .85)
     tab_radius = max(2.8, rim_width_mm * .80)
-    _extrude_polygon(lines, _capsule(float(left_outer[:, 0].max()) - 1.0, float(right_outer[:, 0].min()) + 1.0, 0.0, bridge_radius), 0.0, thickness_mm)
+    average_height = (float(left_outer[:, 1].max() - left_outer[:, 1].min()) + float(right_outer[:, 1].max() - right_outer[:, 1].min())) / 2
+    bridge_y = -average_height * 0.23
+    bridge_band = max(bridge_radius * 1.6, average_height * 0.08)
+    bridge_left_x = _edge_x_at_y(left_outer, bridge_y, "right", bridge_band)
+    bridge_right_x = _edge_x_at_y(right_outer, bridge_y, "left", bridge_band)
+    _extrude_polygon(lines, _capsule(bridge_left_x - 1.0, bridge_right_x + 1.0, bridge_y, bridge_radius), 0.0, thickness_mm)
     _extrude_polygon(lines, _capsule(float(left_outer[:, 0].min()) - 10.0, float(left_outer[:, 0].min()) + 1.0, 0.0, tab_radius), 0.0, thickness_mm)
     _extrude_polygon(lines, _capsule(float(right_outer[:, 0].max()) - 1.0, float(right_outer[:, 0].max()) + 10.0, 0.0, tab_radius), 0.0, thickness_mm)
     lines.append("endsolid optiframe")

@@ -72,6 +72,7 @@ function App() {
     bridge: bridgeWidth,
     rim: rimWidth,
     clearance,
+    bridgeY: -((leftMeasurement.height_b_mm + rightMeasurement.height_b_mm) / 2) * 0.23,
     leftPath: normalizeContour(leftMeasurement.contour_mm),
     rightPath: normalizeContour(rightMeasurement.contour_mm),
   } : null;
@@ -459,7 +460,7 @@ function App() {
             {framePreview && (
               <div className="frame-previews">
                 <svg className="frame-preview" viewBox="-62 -34 124 68" role="img" aria-label="Top view preview of generated frame">
-                  <line className="frame-bridge" x1={-framePreview.bridge / 2} y1="0" x2={framePreview.bridge / 2} y2="0" />
+                  <line className="frame-bridge" x1={-framePreview.bridge / 2} y1={framePreview.bridgeY} x2={framePreview.bridge / 2} y2={framePreview.bridgeY} />
                   <line className="frame-tab" x1={-(framePreview.bridge / 2 + framePreview.leftWidth + 10)} y1="0" x2={-(framePreview.bridge / 2 + framePreview.leftWidth / 2 + 1)} y2="0" />
                   <line className="frame-tab" x1={framePreview.bridge / 2 + framePreview.rightWidth / 2 + 1} y1="0" x2={framePreview.bridge / 2 + framePreview.rightWidth + 10} y2="0" />
                   <path
@@ -481,14 +482,14 @@ function App() {
                 </svg>
                 <svg className="frame-preview frame-preview-3d" viewBox="-62 -44 124 88" role="img" aria-label="Angled 3D preview of generated frame">
                   <g className="frame-shadow" transform="translate(5 9) scale(1 .72)">
-                    <line className="frame-bridge" x1={-framePreview.bridge / 2} y1="0" x2={framePreview.bridge / 2} y2="0" />
+                    <line className="frame-bridge" x1={-framePreview.bridge / 2} y1={framePreview.bridgeY} x2={framePreview.bridge / 2} y2={framePreview.bridgeY} />
                     <line className="frame-tab" x1={-(framePreview.bridge / 2 + framePreview.leftWidth + 10)} y1="0" x2={-(framePreview.bridge / 2 + framePreview.leftWidth / 2 + 1)} y2="0" />
                     <line className="frame-tab" x1={framePreview.bridge / 2 + framePreview.rightWidth / 2 + 1} y1="0" x2={framePreview.bridge / 2 + framePreview.rightWidth + 10} y2="0" />
                     <path className="frame-rim" d={contourPath(offsetContour(framePreview.leftPath, framePreview.rim + framePreview.clearance), -(framePreview.bridge / 2 + framePreview.leftWidth / 2), 0)} />
                     <path className="frame-rim" d={contourPath(offsetContour(framePreview.rightPath, framePreview.rim + framePreview.clearance), framePreview.bridge / 2 + framePreview.rightWidth / 2, 0)} />
                   </g>
                   <g transform="translate(0 -2) scale(1 .72)">
-                    <line className="frame-bridge" x1={-framePreview.bridge / 2} y1="0" x2={framePreview.bridge / 2} y2="0" />
+                    <line className="frame-bridge" x1={-framePreview.bridge / 2} y1={framePreview.bridgeY} x2={framePreview.bridge / 2} y2={framePreview.bridgeY} />
                     <line className="frame-tab" x1={-(framePreview.bridge / 2 + framePreview.leftWidth + 10)} y1="0" x2={-(framePreview.bridge / 2 + framePreview.leftWidth / 2 + 1)} y2="0" />
                     <line className="frame-tab" x1={framePreview.bridge / 2 + framePreview.rightWidth / 2 + 1} y1="0" x2={framePreview.bridge / 2 + framePreview.rightWidth + 10} y2="0" />
                     <path className="frame-rim" d={contourPath(offsetContour(framePreview.leftPath, framePreview.rim + framePreview.clearance), -(framePreview.bridge / 2 + framePreview.leftWidth / 2), 0)} />
