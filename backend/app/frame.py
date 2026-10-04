@@ -14,10 +14,36 @@ def _area(points: np.ndarray) -> float:
     return float(np.dot(points[:, 0], np.roll(points[:, 1], -1)) - np.dot(points[:, 1], np.roll(points[:, 0], -1))) / 2
 
 
+def _convex_hull(points: np.ndarray) -> np.ndarray:
+    ordered = sorted({(float(x), float(y)) for x, y in points})
+    if len(ordered) <= 3:
+        return np.asarray(ordered, dtype=np.float32)
+
+    def cross(o: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower: list[tuple[float, float]] = []
+    for point in ordered:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], point) <= 0:
+            lower.pop()
+        lower.append(point)
+
+    upper: list[tuple[float, float]] = []
+    for point in reversed(ordered):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], point) <= 0:
+            upper.pop()
+        upper.append(point)
+
+    return np.asarray(lower[:-1] + upper[:-1], dtype=np.float32)
+
+
 def _resample(points: list[tuple[float, float]], count: int = POINT_COUNT) -> np.ndarray:
     polygon = np.asarray(points, dtype=np.float32)
     if len(polygon) < 3:
         raise ValueError("Contour needs at least three points.")
+    polygon = _convex_hull(polygon)
+    if len(polygon) < 3:
+        raise ValueError("Contour needs at least three non-collinear points.")
     if _area(polygon) < 0:
         polygon = polygon[::-1]
     closed = np.vstack([polygon, polygon[0]])

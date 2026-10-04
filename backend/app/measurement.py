@@ -315,10 +315,14 @@ def _sheet_dark_rim_candidates(rectified: np.ndarray, calibration: CalibrationRe
 
 
 def _simplify_metric(contour_px: np.ndarray, calibration: CalibrationReady) -> tuple[np.ndarray, np.ndarray]:
-    # A quarter-millimetre simplification suppresses pixel-staircase perimeter
-    # inflation while retaining substantially finer detail than the 1 mm target.
-    epsilon_px = max(.5, .25 / calibration.millimetres_per_pixel)
-    simplified_px = cv2.approxPolyDP(contour_px, epsilon_px, True).reshape(-1, 2).astype(np.float32)
+    # The edge detector can pick up glare lines and small inner reflections on
+    # transparent lenses. For measurement/CAD we want the usable outside lens
+    # boundary, not every pixel-scale wiggle, so export a clean outer hull.
+    hull_px = cv2.convexHull(contour_px.astype(np.float32))
+    epsilon_px = max(.75, .45 / calibration.millimetres_per_pixel)
+    simplified_px = cv2.approxPolyDP(hull_px, epsilon_px, True).reshape(-1, 2).astype(np.float32)
+    if len(simplified_px) < 8 and len(hull_px) >= 8:
+        simplified_px = hull_px.reshape(-1, 2).astype(np.float32)
     rectified_to_mm = np.asarray(calibration.source_to_card_mm) @ np.linalg.inv(
         np.asarray(calibration.source_to_rectified)
     )
