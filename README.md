@@ -10,6 +10,24 @@ The app is built for the contest workflow: place one loose lens on the marker sh
 - Repository: https://github.com/essamamiri/OptiFrame
 - QR code: generate from the public app URL and show it during the demo.
 
+## Install On Phone
+
+After deployment, open the HTTPS app URL on the phone.
+
+Android Chrome:
+
+1. Open the app URL.
+2. Tap the browser menu.
+3. Tap **Install app** or **Add to Home screen**.
+
+iPhone Safari:
+
+1. Open the app URL in Safari.
+2. Tap Share.
+3. Tap **Add to Home Screen**.
+
+OptiFrame includes a web app manifest, app icons, iOS home-screen tags, and a service worker, so it can be installed like a PWA.
+
 ## What It Does
 
 - Calibrates photos from a 4-marker ArUco capture sheet.
@@ -57,6 +75,7 @@ vercel.json Vercel service routing
 | Tenons/tabs and bridge | Implemented in STL generator |
 | STL download | Implemented as `monture.stl` |
 | In-app preview | Implemented as top and angled frame previews |
+| Installable phone app | Implemented as PWA; install from Android Chrome or iOS Safari |
 | Public HTTPS URL + QR code | Must be added after deployment |
 | Real-phone validation | Must be repeated before judging |
 | Physical print/clip validation | Bonus, not yet confirmed |
