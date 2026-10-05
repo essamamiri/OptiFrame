@@ -95,31 +95,58 @@ export async function submitCapture(
   }
 }
 
-export async function downloadFrameStl(
+export interface FrameParams {
+  bridgeWidthMm: number;
+  rimWidthMm: number;
+  thicknessMm: number;
+  clearanceMm: number;
+}
+
+async function requestFrame(
+  endpoint: "/api/frame-stl" | "/api/frame-glb",
   left: LensMeasurement,
   right: LensMeasurement,
-  bridgeWidthMm = 18,
-  rimWidthMm = 4,
-  thicknessMm = 3,
-  clearanceMm = 0.3,
+  params: FrameParams,
+  layout: "assembled" | "print" = "assembled",
+  signal?: AbortSignal,
 ): Promise<Blob> {
-  const response = await fetch("/api/frame-stl", {
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal,
     body: JSON.stringify({
       left_contour_mm: left.contour_mm,
       right_contour_mm: right.contour_mm,
-      bridge_width_mm: bridgeWidthMm,
-      rim_width_mm: rimWidthMm,
-      thickness_mm: thicknessMm,
-      clearance_mm: clearanceMm,
+      bridge_width_mm: params.bridgeWidthMm,
+      rim_width_mm: params.rimWidthMm,
+      thickness_mm: params.thicknessMm,
+      clearance_mm: params.clearanceMm,
+      layout,
     }),
   });
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as
       | { detail?: unknown }
       | null;
-    throw new Error(typeof payload?.detail === "string" ? payload.detail : "The frame STL could not be generated.");
+    throw new Error(typeof payload?.detail === "string" ? payload.detail : "The frame could not be generated.");
   }
   return await response.blob();
+}
+
+export function downloadFrameStl(
+  left: LensMeasurement,
+  right: LensMeasurement,
+  params: FrameParams,
+  layout: "assembled" | "print" = "assembled",
+): Promise<Blob> {
+  return requestFrame("/api/frame-stl", left, right, params, layout);
+}
+
+export function fetchFrameGlb(
+  left: LensMeasurement,
+  right: LensMeasurement,
+  params: FrameParams,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  return requestFrame("/api/frame-glb", left, right, params, "assembled", signal);
 }

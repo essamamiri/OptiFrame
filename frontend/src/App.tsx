@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
   Camera,
   Check,
@@ -16,8 +16,12 @@ import {
   Eye,
   LensMeasurement,
   downloadFrameStl,
+  fetchFrameGlb,
   submitCapture,
 } from "./api";
+import { SAMPLE_LENSES } from "./sampleLenses";
+
+const FrameViewer = lazy(() => import("./FrameViewer"));
 
 const MAX_FILE_SIZE = 4 * 1024 * 1024;
 
@@ -91,20 +95,35 @@ function App() {
   const galleryInput = useRef<HTMLInputElement>(null);
   const calibration = receipt?.calibration;
   const measurement = receipt?.measurement;
-  const leftMeasurement = receipts.left?.measurement?.status === "measured" ? receipts.left.measurement as LensMeasurement : null;
-  const rightMeasurement = receipts.right?.measurement?.status === "measured" ? receipts.right.measurement as LensMeasurement : null;
-  const framePreview = leftMeasurement && rightMeasurement ? {
-    leftWidth: leftMeasurement.width_a_mm,
-    leftHeight: leftMeasurement.height_b_mm,
-    rightWidth: rightMeasurement.width_a_mm,
-    rightHeight: rightMeasurement.height_b_mm,
-    bridge: bridgeWidth,
-    rim: rimWidth,
-    clearance,
-    bridgeY: -((leftMeasurement.height_b_mm + rightMeasurement.height_b_mm) / 2) * 0.23,
-    leftPath: landscapeContour(leftMeasurement.contour_mm),
-    rightPath: landscapeContour(rightMeasurement.contour_mm),
-  } : null;
+  const measuredLeft = receipts.left?.measurement?.status === "measured" ? receipts.left.measurement as LensMeasurement : null;
+  const measuredRight = receipts.right?.measurement?.status === "measured" ? receipts.right.measurement as LensMeasurement : null;
+  const [useSample, setUseSample] = useState(() => new URLSearchParams(window.location.search).has("demo"));
+  const usingSample = useSample && !(measuredLeft && measuredRight);
+  const leftMeasurement = measuredLeft ?? (usingSample ? SAMPLE_LENSES.left : null);
+  const rightMeasurement = measuredRight ?? (usingSample ? SAMPLE_LENSES.right : null);
+  const [glbUrl, setGlbUrl] = useState("");
+  const [frameError, setFrameError] = useState("");
+
+  useEffect(() => {
+    if (!leftMeasurement || !rightMeasurement) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetchFrameGlb(leftMeasurement, rightMeasurement, {
+        bridgeWidthMm: bridgeWidth, rimWidthMm: rimWidth, thicknessMm: frameThickness, clearanceMm: clearance,
+      }, controller.signal)
+        .then(blob => {
+          setFrameError("");
+          setGlbUrl(previous => {
+            if (previous) URL.revokeObjectURL(previous);
+            return URL.createObjectURL(blob);
+          });
+        })
+        .catch(caught => {
+          if (!controller.signal.aborted) setFrameError(caught instanceof Error ? caught.message : "The 3D preview could not be generated.");
+        });
+    }, 350);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [leftMeasurement, rightMeasurement, bridgeWidth, rimWidth, frameThickness, clearance]);
   const fitReport = leftMeasurement && rightMeasurement ? {
     symmetryDelta: Math.abs(leftMeasurement.width_a_mm - rightMeasurement.width_a_mm) + Math.abs(leftMeasurement.height_b_mm - rightMeasurement.height_b_mm),
     averageConfidence: (leftMeasurement.confidence + rightMeasurement.confidence) / 2,
@@ -191,7 +210,7 @@ function App() {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  async function downloadFrame() {
+  async function downloadFrame(layout: "assembled" | "print" = "assembled") {
     if (!leftMeasurement || !rightMeasurement) {
       setError("Measure both lenses first.");
       return;
@@ -199,11 +218,13 @@ function App() {
     setIsGeneratingFrame(true);
     setError("");
     try {
-      const blob = await downloadFrameStl(leftMeasurement, rightMeasurement, bridgeWidth, rimWidth, frameThickness, clearance);
+      const blob = await downloadFrameStl(leftMeasurement, rightMeasurement, {
+        bridgeWidthMm: bridgeWidth, rimWidthMm: rimWidth, thicknessMm: frameThickness, clearanceMm: clearance,
+      }, layout);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = "monture.stl";
+      link.download = layout === "print" ? "monture-print-plate.stl" : "monture.stl";
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (caught) {
@@ -486,48 +507,19 @@ function App() {
 
         {leftMeasurement && rightMeasurement && (
           <section className="frame-panel" aria-label="Frame export">
-            {framePreview && (
-              <div className="frame-previews">
-                <svg className="frame-preview" viewBox="-62 -34 124 68" role="img" aria-label="Top view preview of generated frame">
-                  <line className="frame-bridge" x1={-framePreview.bridge / 2} y1={framePreview.bridgeY} x2={framePreview.bridge / 2} y2={framePreview.bridgeY} />
-                  <line className="frame-tab" x1={-(framePreview.bridge / 2 + framePreview.leftWidth + 10)} y1="0" x2={-(framePreview.bridge / 2 + framePreview.leftWidth / 2 + 1)} y2="0" />
-                  <line className="frame-tab" x1={framePreview.bridge / 2 + framePreview.rightWidth / 2 + 1} y1="0" x2={framePreview.bridge / 2 + framePreview.rightWidth + 10} y2="0" />
-                  <path
-                    className="frame-rim"
-                    d={contourPath(offsetContour(framePreview.leftPath, framePreview.rim + framePreview.clearance), -(framePreview.bridge / 2 + framePreview.leftWidth / 2), 0)}
-                  />
-                  <path
-                    className="frame-opening"
-                    d={contourPath(offsetContour(framePreview.leftPath, framePreview.clearance), -(framePreview.bridge / 2 + framePreview.leftWidth / 2), 0)}
-                  />
-                  <path
-                    className="frame-rim"
-                    d={contourPath(offsetContour(framePreview.rightPath, framePreview.rim + framePreview.clearance), framePreview.bridge / 2 + framePreview.rightWidth / 2, 0)}
-                  />
-                  <path
-                    className="frame-opening"
-                    d={contourPath(offsetContour(framePreview.rightPath, framePreview.clearance), framePreview.bridge / 2 + framePreview.rightWidth / 2, 0)}
-                  />
-                </svg>
-                <svg className="frame-preview frame-preview-3d" viewBox="-62 -44 124 88" role="img" aria-label="Angled 3D preview of generated frame">
-                  <g className="frame-shadow" transform="translate(5 9) scale(1 .72)">
-                    <line className="frame-bridge" x1={-framePreview.bridge / 2} y1={framePreview.bridgeY} x2={framePreview.bridge / 2} y2={framePreview.bridgeY} />
-                    <line className="frame-tab" x1={-(framePreview.bridge / 2 + framePreview.leftWidth + 10)} y1="0" x2={-(framePreview.bridge / 2 + framePreview.leftWidth / 2 + 1)} y2="0" />
-                    <line className="frame-tab" x1={framePreview.bridge / 2 + framePreview.rightWidth / 2 + 1} y1="0" x2={framePreview.bridge / 2 + framePreview.rightWidth + 10} y2="0" />
-                    <path className="frame-rim" d={contourPath(offsetContour(framePreview.leftPath, framePreview.rim + framePreview.clearance), -(framePreview.bridge / 2 + framePreview.leftWidth / 2), 0)} />
-                    <path className="frame-rim" d={contourPath(offsetContour(framePreview.rightPath, framePreview.rim + framePreview.clearance), framePreview.bridge / 2 + framePreview.rightWidth / 2, 0)} />
-                  </g>
-                  <g transform="translate(0 -2) scale(1 .72)">
-                    <line className="frame-bridge" x1={-framePreview.bridge / 2} y1={framePreview.bridgeY} x2={framePreview.bridge / 2} y2={framePreview.bridgeY} />
-                    <line className="frame-tab" x1={-(framePreview.bridge / 2 + framePreview.leftWidth + 10)} y1="0" x2={-(framePreview.bridge / 2 + framePreview.leftWidth / 2 + 1)} y2="0" />
-                    <line className="frame-tab" x1={framePreview.bridge / 2 + framePreview.rightWidth / 2 + 1} y1="0" x2={framePreview.bridge / 2 + framePreview.rightWidth + 10} y2="0" />
-                    <path className="frame-rim" d={contourPath(offsetContour(framePreview.leftPath, framePreview.rim + framePreview.clearance), -(framePreview.bridge / 2 + framePreview.leftWidth / 2), 0)} />
-                    <path className="frame-opening" d={contourPath(offsetContour(framePreview.leftPath, framePreview.clearance), -(framePreview.bridge / 2 + framePreview.leftWidth / 2), 0)} />
-                    <path className="frame-rim" d={contourPath(offsetContour(framePreview.rightPath, framePreview.rim + framePreview.clearance), framePreview.bridge / 2 + framePreview.rightWidth / 2, 0)} />
-                    <path className="frame-opening" d={contourPath(offsetContour(framePreview.rightPath, framePreview.clearance), framePreview.bridge / 2 + framePreview.rightWidth / 2, 0)} />
-                  </g>
-                </svg>
-              </div>
+            <div className="frame-panel-head">
+              <span>Generated frame</span>
+              <strong>{usingSample ? "Sample lenses (not measured)" : "From your measured lenses"}</strong>
+            </div>
+            {glbUrl ? (
+              <Suspense fallback={<div className="viewer-stage"><span className="viewer-loading">Loading 3D viewer…</span></div>}>
+                <FrameViewer
+                  glbUrl={glbUrl}
+                  caption={`Seats R ${(rightMeasurement.width_a_mm + 2 * clearance).toFixed(1)}×${(rightMeasurement.height_b_mm + 2 * clearance).toFixed(1)} · L ${(leftMeasurement.width_a_mm + 2 * clearance).toFixed(1)}×${(leftMeasurement.height_b_mm + 2 * clearance).toFixed(1)} · DBL ${bridgeWidth.toFixed(1)} mm`}
+                />
+              </Suspense>
+            ) : (
+              <div className="viewer-stage"><span className="viewer-loading">{frameError || "Building 3D preview…"}</span></div>
             )}
             <div className="cad-controls">
               <label>
@@ -570,9 +562,13 @@ function App() {
               <span>Right</span>
               <strong>{rightMeasurement.width_a_mm.toFixed(1)} × {rightMeasurement.height_b_mm.toFixed(1)} mm</strong>
             </div>
-            <button className="primary-button" type="button" onClick={downloadFrame} disabled={isGeneratingFrame}>
+            <button className="primary-button" type="button" onClick={() => downloadFrame("assembled")} disabled={isGeneratingFrame}>
               <Download size={18} /> {isGeneratingFrame ? "Generating STL…" : "Download monture.stl"}
             </button>
+            <button className="secondary-button" type="button" onClick={() => downloadFrame("print")} disabled={isGeneratingFrame}>
+              <Download size={18} /> Download print plate (front + temples flat)
+            </button>
+            <p className="frame-disclaimer">Prototype geometry. Lens seats follow the measured outline plus clearance; physical print fit has not been validated.</p>
             <button className="secondary-button" type="button" onClick={downloadFitCheck}>
               <Download size={18} /> Download 1:1 fit check
             </button>
@@ -580,6 +576,17 @@ function App() {
               <Check size={18} /> Copy demo summary
             </button>
           </section>
+        )}
+
+        {!(leftMeasurement && rightMeasurement) && (
+          <button className="sample-link" type="button" onClick={() => setUseSample(true)}>
+            No marker sheet handy? Preview the frame with sample lenses
+          </button>
+        )}
+        {usingSample && (
+          <button className="sample-link" type="button" onClick={() => setUseSample(false)}>
+            Hide sample frame
+          </button>
         )}
 
         <p className="privacy-note"><ShieldCheck size={15} /> Photos are processed in memory and are not saved.</p>
