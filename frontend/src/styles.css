@@ -348,3 +348,21 @@ main{max-width:1020px;padding:26px 24px 50px}.progress-wrap{max-width:760px;marg
   .pipeline-view { grid-template-columns: 1fr 1fr; }
   .frame-previews { grid-template-columns: 1fr; }
 }
+
+/* 3D frame viewer */
+.frame-panel-head { grid-column: 1 / -1; display: flex !important; justify-content: space-between; align-items: baseline; gap: 12px; }
+.frame-viewer { grid-column: 1 / -1; display: grid; gap: 10px; }
+.viewer-stage { grid-column: 1 / -1; position: relative; height: 340px; border: 1px solid #31445e; border-radius: 14px; overflow: hidden;
+  background: radial-gradient(120% 90% at 50% 18%, #1d3346 0%, #0b1524 55%, #060c16 100%); touch-action: none; }
+.viewer-stage canvas { display: block; width: 100%; height: 100%; }
+.viewer-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #a9c7bf; font-size: 13px; letter-spacing: .04em; text-transform: none !important; }
+.viewer-caption { position: absolute; left: 12px; bottom: 10px; padding: 5px 9px; border-radius: 999px; background: #060c16b8; border: 1px solid #31445e; color: #cfe3dc !important; font-size: 11px !important; letter-spacing: .03em !important; text-transform: none !important; pointer-events: none; }
+.viewer-toolbar { display: flex !important; flex-wrap: wrap; gap: 8px; align-items: center; }
+.viewer-chips { display: flex !important; flex-wrap: wrap; gap: 6px; }
+.viewer-chips button, .frame-panel .viewer-save { grid-column: auto; min-height: 34px; padding: 6px 11px; border-radius: 999px; border: 1px solid #36455e; background: #0a1422; color: #dce8f5; font-size: 12px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.viewer-chips button.active { background: #72f0cf; border-color: #72f0cf; color: #071c17; }
+.viewer-chips i { width: 11px; height: 11px; border-radius: 50%; border: 1px solid #ffffff55; }
+.frame-panel .viewer-save { margin-left: auto; background: #152033; }
+.frame-disclaimer { grid-column: 1 / -1; margin: 2px 0 0; color: #a9c7bf; font-size: 12px; line-height: 1.5; }
+.sample-link { display: block; margin: 18px auto 0; background: none; border: 0; color: #72f0cf; font-size: 14px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+@media (max-width: 520px) { .viewer-stage { height: 280px; } .frame-panel .viewer-save { margin-left: 0; } }

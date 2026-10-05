@@ -17,7 +17,7 @@ from starlette.staticfiles import StaticFiles
 
 from .calibration import CalibrationReady, CalibrationRetry, calibrate
 from .aruco_sheet import SheetReady, calibrate_sheet
-from .frame import generate_frame_stl
+from .frame import generate_frame_glb, generate_frame_stl
 from .measurement import LensMeasurement, MeasurementRetry, measure_lens
 from .upload_limit import MAX_IMAGE_BYTES, UploadLimitMiddleware
 
@@ -62,6 +62,7 @@ class FrameRequest(BaseModel):
     rim_width_mm: float = 4.0
     thickness_mm: float = 3.0
     clearance_mm: float = 0.3
+    layout: Literal["assembled", "print"] = "assembled"
 
 
 app = FastAPI(
@@ -124,8 +125,7 @@ async def create_capture(
     )
 
 
-@app.post("/api/frame-stl")
-async def create_frame_stl(request: FrameRequest) -> Response:
+def _validate_frame_request(request: FrameRequest) -> None:
     if not 12 <= request.bridge_width_mm <= 28:
         raise HTTPException(status_code=422, detail="Bridge width must be between 12 and 28 mm.")
     if not 2.5 <= request.rim_width_mm <= 7:
@@ -136,22 +136,45 @@ async def create_frame_stl(request: FrameRequest) -> Response:
         raise HTTPException(status_code=422, detail="Clearance must be between 0 and 1 mm.")
     if len(request.left_contour_mm) < 3 or len(request.right_contour_mm) < 3:
         raise HTTPException(status_code=422, detail="Measure both lenses before generating the frame.")
+
+
+def _frame_args(request: FrameRequest) -> tuple:
+    return (
+        request.left_contour_mm,
+        request.right_contour_mm,
+        request.bridge_width_mm,
+        request.rim_width_mm,
+        request.thickness_mm,
+        request.clearance_mm,
+    )
+
+
+@app.post("/api/frame-stl")
+async def create_frame_stl(request: FrameRequest) -> Response:
+    _validate_frame_request(request)
     try:
-        stl = await run_in_threadpool(
-            generate_frame_stl,
-            request.left_contour_mm,
-            request.right_contour_mm,
-            request.bridge_width_mm,
-            request.rim_width_mm,
-            request.thickness_mm,
-            request.clearance_mm,
-        )
+        stl = await run_in_threadpool(generate_frame_stl, *_frame_args(request), request.layout)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    filename = "monture-print-plate.stl" if request.layout == "print" else "monture.stl"
     return Response(
         content=stl,
         media_type="model/stl",
-        headers={"Content-Disposition": 'attachment; filename="monture.stl"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/frame-glb")
+async def create_frame_glb(request: FrameRequest) -> Response:
+    _validate_frame_request(request)
+    try:
+        glb = await run_in_threadpool(generate_frame_glb, *_frame_args(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Response(
+        content=glb,
+        media_type="model/gltf-binary",
+        headers={"Content-Disposition": 'attachment; filename="monture.glb"'},
     )
 
 
