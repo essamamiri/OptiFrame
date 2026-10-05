@@ -230,6 +230,55 @@ def _beam(
         _triangle(lines, corners[p0], corners[p2], corners[p3])
 
 
+def _ring_basis(tangent: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    tangent = tangent / max(float(np.linalg.norm(tangent)), 1e-6)
+    up = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    side = np.cross(tangent, up)
+    if float(np.linalg.norm(side)) <= 1e-6:
+        side = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    else:
+        side = side / np.linalg.norm(side)
+    normal = np.cross(side, tangent)
+    normal = normal / max(float(np.linalg.norm(normal)), 1e-6)
+    return side, normal
+
+
+def _tube_path(lines: list[str], points: list[tuple[float, float, float]], radius: float, sides: int = 14) -> None:
+    if len(points) < 2:
+        return
+    pts = [np.asarray(point, dtype=np.float32) for point in points]
+    rings: list[list[tuple[float, float, float]]] = []
+    for index, point in enumerate(pts):
+        if index == 0:
+            tangent = pts[1] - point
+        elif index == len(pts) - 1:
+            tangent = point - pts[index - 1]
+        else:
+            tangent = pts[index + 1] - pts[index - 1]
+        side, normal = _ring_basis(tangent)
+        ring = []
+        for step in range(sides):
+            angle = 2 * pi * step / sides
+            vertex = point + side * np.cos(angle) * radius + normal * np.sin(angle) * radius
+            ring.append((float(vertex[0]), float(vertex[1]), float(vertex[2])))
+        rings.append(ring)
+
+    for index in range(len(rings) - 1):
+        current = rings[index]
+        following = rings[index + 1]
+        for step in range(sides):
+            nxt = (step + 1) % sides
+            _triangle(lines, current[step], following[step], following[nxt])
+            _triangle(lines, current[step], following[nxt], current[nxt])
+
+    start_center = tuple(float(value) for value in pts[0])
+    end_center = tuple(float(value) for value in pts[-1])
+    for step in range(sides):
+        nxt = (step + 1) % sides
+        _triangle(lines, start_center, rings[0][nxt], rings[0][step])
+        _triangle(lines, end_center, rings[-1][step], rings[-1][nxt])
+
+
 def _extrude_polygon(lines: list[str], polygon: np.ndarray, z0: float, z1: float) -> None:
     if _area(polygon) < 0:
         polygon = polygon[::-1]
@@ -280,40 +329,54 @@ def _temple_with_ear_grip(
     rim_width_mm: float,
     thickness_mm: float,
 ) -> None:
-    """Add a curved printable temple arm and downward ear grip.
-
-    The front frame stays in the x/y plane and has z thickness. Temples extend
-    backward along negative z, so they make the STL a complete glasses form
-    without changing the measured lens openings.
-    """
-    arm_width = max(3.8, rim_width_mm * 0.9)
-    arm_height = max(2.8, rim_width_mm * 0.62)
+    """Add a swept temple arm and ear hook without changing lens openings."""
     hinge_depth = max(4.5, thickness_mm * 1.4)
-    arm_length = 115.0
-    hook_drop = 28.0
-    hook_depth = 25.0
-    x0 = hinge_x - arm_width * 0.68
-    x1 = hinge_x + arm_width * 0.68
+    arm_radius = max(1.75, rim_width_mm * 0.42)
+    hinge_radius = max(2.25, rim_width_mm * 0.55)
 
-    # Hinge block at the front.
-    _box(lines, x0 - 0.6, x1 + 0.6, -arm_height * 0.9, arm_height * 0.9, -hinge_depth, thickness_mm)
-    _box(lines, x0 - 1.4, x1 + 1.4, -arm_height * 1.35, arm_height * 1.35, -hinge_depth * 0.85, thickness_mm * 1.12)
+    # A single rounded hinge boss keeps the model readable in STL viewers; the
+    # side tab from the rim already provides the flat printable connection.
+    _tube_path(
+        lines,
+        [(hinge_x + side * 1.8, -4.5, -hinge_depth * 0.32), (hinge_x + side * 1.8, 4.5, -hinge_depth * 0.32)],
+        hinge_radius * 0.5,
+        18,
+    )
 
-    # A shaped temple: it sweeps outward, runs backward, then curves down at
-    # the ear. Several beams overlap slightly so the result prints as one part.
-    points = [
-        (hinge_x, 0.0, -hinge_depth),
-        (hinge_x + side * 13.0, -1.5, -34.0),
-        (hinge_x + side * 19.0, -1.0, -82.0),
-        (hinge_x + side * 17.0, 7.0, -arm_length),
-        (hinge_x + side * 13.0, hook_drop, -arm_length - hook_depth),
+    # The main arm is a continuous rounded sweep: slightly flared at the hinge,
+    # straight through the temple, then softly curved around the ear.
+    shoulder = (hinge_x + side * 4.2, 0.0, -hinge_depth * 0.95)
+    temple = [
+        shoulder,
+        (hinge_x + side * 13.5, -0.5, -26.0),
+        (hinge_x + side * 18.0, -0.8, -68.0),
+        (hinge_x + side * 17.0, 3.4, -103.0),
+        (hinge_x + side * 13.0, 14.0, -126.0),
+        (hinge_x + side * 8.5, 24.5, -139.0),
     ]
-    for start, end in zip(points, points[1:]):
-        _beam(lines, start, end, arm_width, arm_height)
+    _tube_path(lines, temple, arm_radius, 18)
 
-    # Rounded, thicker ear tip.
-    tip_x, tip_y, tip_z = points[-1]
-    _beam(lines, (tip_x - side * 2.5, tip_y - 6.0, tip_z + 2.0), (tip_x + side * 6.0, tip_y + 2.0, tip_z - 5.0), arm_width * 1.25, arm_height * 1.45)
+    # A subtle sleeve at the hinge makes the transition intentional instead of
+    # looking like a thin rod pasted onto the rim.
+    _tube_path(
+        lines,
+        [(hinge_x - side * 0.8, 0.0, thickness_mm * 0.25), shoulder],
+        max(2.0, hinge_radius * 0.72),
+        18,
+    )
+
+    # Rounded ear tip, angled inward and thicker so it reads as a grip.
+    tip = temple[-1]
+    _tube_path(
+        lines,
+        [
+            (tip[0], tip[1] - 1.0, tip[2] + 1.0),
+            (tip[0] - side * 3.0, tip[1] + 2.6, tip[2] - 3.0),
+            (tip[0] - side * 7.5, tip[1] + 2.2, tip[2] - 5.5),
+        ],
+        arm_radius * 1.25,
+        18,
+    )
 
 
 def generate_frame_stl(
