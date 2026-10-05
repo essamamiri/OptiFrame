@@ -7,7 +7,7 @@ import numpy as np
 
 RIM_WIDTH_MM = 4.0
 FRAME_THICKNESS_MM = 3.0
-POINT_COUNT = 384
+POINT_COUNT = 224
 
 
 def _area(points: np.ndarray) -> float:
@@ -279,6 +279,29 @@ def _tube_path(lines: list[str], points: list[tuple[float, float, float]], radiu
         _triangle(lines, end_center, rings[-1][step], rings[-1][nxt])
 
 
+def _catmull_rom(points: list[tuple[float, float, float]], samples: int = 10) -> list[tuple[float, float, float]]:
+    if len(points) < 3:
+        return points
+    pts = [np.asarray(point, dtype=np.float32) for point in points]
+    expanded = [pts[0], *pts, pts[-1]]
+    curve: list[tuple[float, float, float]] = []
+    for index in range(1, len(expanded) - 2):
+        p0, p1, p2, p3 = expanded[index - 1], expanded[index], expanded[index + 1], expanded[index + 2]
+        for step in range(samples):
+            t = step / samples
+            t2 = t * t
+            t3 = t2 * t
+            point = 0.5 * (
+                (2 * p1)
+                + (-p0 + p2) * t
+                + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2
+                + (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+            )
+            curve.append((float(point[0]), float(point[1]), float(point[2])))
+    curve.append(points[-1])
+    return curve
+
+
 def _extrude_polygon(lines: list[str], polygon: np.ndarray, z0: float, z1: float) -> None:
     if _area(polygon) < 0:
         polygon = polygon[::-1]
@@ -346,14 +369,15 @@ def _temple_with_ear_grip(
     # The main arm is a continuous rounded sweep: slightly flared at the hinge,
     # straight through the temple, then softly curved around the ear.
     shoulder = (hinge_x + side * 4.2, 0.0, -hinge_depth * 0.95)
-    temple = [
+    temple_controls = [
         shoulder,
-        (hinge_x + side * 13.5, -0.5, -26.0),
-        (hinge_x + side * 18.0, -0.8, -68.0),
-        (hinge_x + side * 17.0, 3.4, -103.0),
-        (hinge_x + side * 13.0, 14.0, -126.0),
-        (hinge_x + side * 8.5, 24.5, -139.0),
+        (hinge_x + side * 13.0, -0.4, -28.0),
+        (hinge_x + side * 18.0, -0.7, -72.0),
+        (hinge_x + side * 17.0, 1.1, -112.0),
+        (hinge_x + side * 14.5, 5.8, -136.0),
+        (hinge_x + side * 10.5, 9.4, -146.0),
     ]
+    temple = _catmull_rom(temple_controls, 8)
     _tube_path(lines, temple, arm_radius, 18)
 
     # A subtle sleeve at the hinge makes the transition intentional instead of
@@ -366,13 +390,13 @@ def _temple_with_ear_grip(
     )
 
     # Rounded ear tip, angled inward and thicker so it reads as a grip.
-    tip = temple[-1]
+    tip = temple_controls[-1]
     _tube_path(
         lines,
         [
-            (tip[0], tip[1] - 1.0, tip[2] + 1.0),
-            (tip[0] - side * 3.0, tip[1] + 2.6, tip[2] - 3.0),
-            (tip[0] - side * 7.5, tip[1] + 2.2, tip[2] - 5.5),
+            (tip[0], tip[1] - 0.6, tip[2] + 1.0),
+            (tip[0] - side * 3.5, tip[1] + 1.5, tip[2] - 2.8),
+            (tip[0] - side * 8.5, tip[1] + 1.0, tip[2] - 5.0),
         ],
         arm_radius * 1.25,
         18,
