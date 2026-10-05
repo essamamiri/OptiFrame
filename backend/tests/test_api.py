@@ -1,3 +1,5 @@
+import numpy as np
+import struct
 from io import BytesIO
 import re
 
@@ -111,30 +113,35 @@ def test_health():
 
 def test_frame_stl_endpoint_returns_downloadable_mesh():
     contour = [[0, 0], [34, 0], [34, 51], [0, 51]]
-    response = client.post("/api/frame-stl", json={
+    body = {
         "left_contour_mm": contour,
         "right_contour_mm": contour,
         "bridge_width_mm": 18,
         "rim_width_mm": 4,
         "thickness_mm": 3,
         "clearance_mm": 0.3,
-    })
+    }
+    response = client.post("/api/frame-stl", json=body)
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("model/stl")
-    text = response.text
-    assert text.startswith("solid optiframe")
-    assert text.endswith("endsolid optiframe\n")
-    assert text.count("facet normal") > 100
-    vertices = [
-        tuple(map(float, match.groups()))
-        for match in re.finditer(r"vertex ([-0-9.]+) ([-0-9.]+) ([-0-9.]+)", text)
-    ]
-    xs = [vertex[0] for vertex in vertices]
-    ys = [vertex[1] for vertex in vertices]
-    zs = [vertex[2] for vertex in vertices]
-    assert max(xs) - min(xs) > max(ys) - min(ys)
-    assert min(zs) < -100
+    assert 'filename="monture.stl"' in response.headers["content-disposition"]
+    data = response.content
+    (count,) = struct.unpack("<I", data[80:84])
+    assert count > 1000 and len(data) == 84 + 50 * count
+    vertices = np.frombuffer(data[84:], dtype=[("n", "<f4", 3), ("v", "<f4", (3, 3)), ("a", "<u2")])["v"].reshape(-1, 3)
+    span = vertices.max(axis=0) - vertices.min(axis=0)
+    assert span[0] > span[1]
 
+    plate = client.post("/api/frame-stl", json={**body, "layout": "print"})
+    assert plate.status_code == 200
+    assert 'filename="monture-print-plate.stl"' in plate.headers["content-disposition"]
+
+    glb = client.post("/api/frame-glb", json=body)
+    assert glb.status_code == 200
+    assert glb.headers["content-type"].startswith("model/gltf-binary")
+    assert glb.content[:4] == b"glTF"
+
+    assert client.post("/api/frame-glb", json={**body, "rim_width_mm": 9}).status_code == 422
 
 def test_streamed_body_limit_before_multipart_parsing():
     response = client.post("/api/captures", content=iter([b"x" * MAX_BODY_BYTES, b"x"]),
