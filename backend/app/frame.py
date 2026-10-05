@@ -226,6 +226,39 @@ def _edge_x_at_y(points: np.ndarray, y: float, side: str, band: float) -> float:
     return float(nearby[:, 0].max() if side == "right" else nearby[:, 0].min())
 
 
+def _temple_with_ear_grip(
+    lines: list[str],
+    hinge_x: float,
+    side: int,
+    rim_width_mm: float,
+    thickness_mm: float,
+) -> None:
+    """Add a simple printable temple arm and downward ear grip.
+
+    The front frame stays in the x/y plane and has z thickness. Temples extend
+    backward along negative z, so they make the STL a complete glasses form
+    without changing the measured lens openings.
+    """
+    arm_half_width = max(2.0, rim_width_mm * 0.48)
+    arm_half_height = max(2.0, rim_width_mm * 0.42)
+    hinge_depth = max(4.0, thickness_mm * 1.4)
+    arm_length = 115.0
+    hook_drop = 26.0
+    hook_depth = 24.0
+    x0 = hinge_x - arm_half_width
+    x1 = hinge_x + arm_half_width
+
+    # Hinge block at the front.
+    _box(lines, x0 - side * 0.5, x1 + side * 0.5, -arm_half_height * 1.25, arm_half_height * 1.25, -hinge_depth, thickness_mm)
+
+    # Long temple arm behind the front.
+    _box(lines, x0, x1, -arm_half_height, arm_half_height, -arm_length, -hinge_depth)
+
+    # Softer ear section: drops down at the end so it reads like an ear grip.
+    _box(lines, x0, x1, arm_half_height * 0.4, hook_drop, -arm_length - hook_depth, -arm_length + 2.0)
+    _box(lines, x0 - 1.3, x1 + 1.3, hook_drop - 5.0, hook_drop + 4.0, -arm_length - hook_depth, -arm_length - 4.0)
+
+
 def generate_frame_stl(
     left_contour_mm: list[tuple[float, float]],
     right_contour_mm: list[tuple[float, float]],
@@ -260,7 +293,11 @@ def generate_frame_stl(
     bridge_left_x = _edge_x_at_y(left_outer, bridge_y, "right", bridge_band)
     bridge_right_x = _edge_x_at_y(right_outer, bridge_y, "left", bridge_band)
     _extrude_polygon(lines, _capsule(bridge_left_x - 1.0, bridge_right_x + 1.0, bridge_y, bridge_radius), 0.0, thickness_mm)
-    _extrude_polygon(lines, _capsule(float(left_outer[:, 0].min()) - 10.0, float(left_outer[:, 0].min()) + 1.0, 0.0, tab_radius), 0.0, thickness_mm)
-    _extrude_polygon(lines, _capsule(float(right_outer[:, 0].max()) - 1.0, float(right_outer[:, 0].max()) + 10.0, 0.0, tab_radius), 0.0, thickness_mm)
+    left_hinge_x = float(left_outer[:, 0].min()) - 10.0
+    right_hinge_x = float(right_outer[:, 0].max()) + 10.0
+    _extrude_polygon(lines, _capsule(left_hinge_x, float(left_outer[:, 0].min()) + 1.0, 0.0, tab_radius), 0.0, thickness_mm)
+    _extrude_polygon(lines, _capsule(float(right_outer[:, 0].max()) - 1.0, right_hinge_x, 0.0, tab_radius), 0.0, thickness_mm)
+    _temple_with_ear_grip(lines, left_hinge_x, -1, rim_width_mm, thickness_mm)
+    _temple_with_ear_grip(lines, right_hinge_x, 1, rim_width_mm, thickness_mm)
     lines.append("endsolid optiframe")
     return "\n".join(lines) + "\n"

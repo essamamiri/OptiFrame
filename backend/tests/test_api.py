@@ -131,7 +131,9 @@ def test_frame_stl_endpoint_returns_downloadable_mesh():
     ]
     xs = [vertex[0] for vertex in vertices]
     ys = [vertex[1] for vertex in vertices]
+    zs = [vertex[2] for vertex in vertices]
     assert max(xs) - min(xs) > max(ys) - min(ys)
+    assert min(zs) < -100
 
 
 def test_streamed_body_limit_before_multipart_parsing():
