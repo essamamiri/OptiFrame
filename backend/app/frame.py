@@ -188,6 +188,48 @@ def _box(lines: list[str], x0: float, x1: float, y0: float, y1: float, z0: float
         _triangle(lines, p[a], p[c], p[d])
 
 
+def _beam(
+    lines: list[str],
+    start: tuple[float, float, float],
+    end: tuple[float, float, float],
+    width: float,
+    height: float,
+) -> None:
+    """Rectangular beam between two 3D points with a stable y-up section."""
+    a = np.asarray(start, dtype=np.float32)
+    b = np.asarray(end, dtype=np.float32)
+    axis = b - a
+    length = float(np.linalg.norm(axis))
+    if length <= 1e-6:
+        return
+    direction = axis / length
+    up = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    side = np.cross(direction, up)
+    if float(np.linalg.norm(side)) <= 1e-6:
+        side = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    else:
+        side = side / np.linalg.norm(side)
+    up = np.cross(side, direction)
+    up = up / np.linalg.norm(up)
+    side *= width / 2
+    up *= height / 2
+
+    corners = {
+        "a00": tuple((a - side - up).tolist()), "a10": tuple((a + side - up).tolist()),
+        "a11": tuple((a + side + up).tolist()), "a01": tuple((a - side + up).tolist()),
+        "b00": tuple((b - side - up).tolist()), "b10": tuple((b + side - up).tolist()),
+        "b11": tuple((b + side + up).tolist()), "b01": tuple((b - side + up).tolist()),
+    }
+    faces = [
+        ("a00", "a10", "a11", "a01"), ("b00", "b01", "b11", "b10"),
+        ("a00", "b00", "b10", "a10"), ("a10", "b10", "b11", "a11"),
+        ("a11", "b11", "b01", "a01"), ("a01", "b01", "b00", "a00"),
+    ]
+    for p0, p1, p2, p3 in faces:
+        _triangle(lines, corners[p0], corners[p1], corners[p2])
+        _triangle(lines, corners[p0], corners[p2], corners[p3])
+
+
 def _extrude_polygon(lines: list[str], polygon: np.ndarray, z0: float, z1: float) -> None:
     if _area(polygon) < 0:
         polygon = polygon[::-1]
@@ -219,6 +261,11 @@ def _capsule(x0: float, x1: float, y: float, radius: float, count: int = 24) -> 
     return np.vstack([right_arc, left_arc]).astype(np.float32)
 
 
+def _ellipse(cx: float, cy: float, rx: float, ry: float, count: int = 36) -> np.ndarray:
+    angles = np.linspace(0, 2 * pi, count, endpoint=False)
+    return np.column_stack([cx + np.cos(angles) * rx, cy + np.sin(angles) * ry]).astype(np.float32)
+
+
 def _edge_x_at_y(points: np.ndarray, y: float, side: str, band: float) -> float:
     nearby = points[np.abs(points[:, 1] - y) <= band]
     if len(nearby) < 2:
@@ -233,30 +280,40 @@ def _temple_with_ear_grip(
     rim_width_mm: float,
     thickness_mm: float,
 ) -> None:
-    """Add a simple printable temple arm and downward ear grip.
+    """Add a curved printable temple arm and downward ear grip.
 
     The front frame stays in the x/y plane and has z thickness. Temples extend
     backward along negative z, so they make the STL a complete glasses form
     without changing the measured lens openings.
     """
-    arm_half_width = max(2.0, rim_width_mm * 0.48)
-    arm_half_height = max(2.0, rim_width_mm * 0.42)
-    hinge_depth = max(4.0, thickness_mm * 1.4)
+    arm_width = max(3.8, rim_width_mm * 0.9)
+    arm_height = max(2.8, rim_width_mm * 0.62)
+    hinge_depth = max(4.5, thickness_mm * 1.4)
     arm_length = 115.0
-    hook_drop = 26.0
-    hook_depth = 24.0
-    x0 = hinge_x - arm_half_width
-    x1 = hinge_x + arm_half_width
+    hook_drop = 28.0
+    hook_depth = 25.0
+    x0 = hinge_x - arm_width * 0.68
+    x1 = hinge_x + arm_width * 0.68
 
     # Hinge block at the front.
-    _box(lines, x0 - side * 0.5, x1 + side * 0.5, -arm_half_height * 1.25, arm_half_height * 1.25, -hinge_depth, thickness_mm)
+    _box(lines, x0 - 0.6, x1 + 0.6, -arm_height * 0.9, arm_height * 0.9, -hinge_depth, thickness_mm)
+    _box(lines, x0 - 1.4, x1 + 1.4, -arm_height * 1.35, arm_height * 1.35, -hinge_depth * 0.85, thickness_mm * 1.12)
 
-    # Long temple arm behind the front.
-    _box(lines, x0, x1, -arm_half_height, arm_half_height, -arm_length, -hinge_depth)
+    # A shaped temple: it sweeps outward, runs backward, then curves down at
+    # the ear. Several beams overlap slightly so the result prints as one part.
+    points = [
+        (hinge_x, 0.0, -hinge_depth),
+        (hinge_x + side * 13.0, -1.5, -34.0),
+        (hinge_x + side * 19.0, -1.0, -82.0),
+        (hinge_x + side * 17.0, 7.0, -arm_length),
+        (hinge_x + side * 13.0, hook_drop, -arm_length - hook_depth),
+    ]
+    for start, end in zip(points, points[1:]):
+        _beam(lines, start, end, arm_width, arm_height)
 
-    # Softer ear section: drops down at the end so it reads like an ear grip.
-    _box(lines, x0, x1, arm_half_height * 0.4, hook_drop, -arm_length - hook_depth, -arm_length + 2.0)
-    _box(lines, x0 - 1.3, x1 + 1.3, hook_drop - 5.0, hook_drop + 4.0, -arm_length - hook_depth, -arm_length - 4.0)
+    # Rounded, thicker ear tip.
+    tip_x, tip_y, tip_z = points[-1]
+    _beam(lines, (tip_x - side * 2.5, tip_y - 6.0, tip_z + 2.0), (tip_x + side * 6.0, tip_y + 2.0, tip_z - 5.0), arm_width * 1.25, arm_height * 1.45)
 
 
 def generate_frame_stl(
@@ -293,6 +350,11 @@ def generate_frame_stl(
     bridge_left_x = _edge_x_at_y(left_outer, bridge_y, "right", bridge_band)
     bridge_right_x = _edge_x_at_y(right_outer, bridge_y, "left", bridge_band)
     _extrude_polygon(lines, _capsule(bridge_left_x - 1.0, bridge_right_x + 1.0, bridge_y, bridge_radius), 0.0, thickness_mm)
+    # Nose pads below the bridge make the generated artifact read as a real
+    # glasses frame, not just two measured rings.
+    pad_y = average_height * 0.22
+    _extrude_polygon(lines, _ellipse(-5.5, pad_y, 2.2, 4.4), -1.2, thickness_mm * 0.75)
+    _extrude_polygon(lines, _ellipse(5.5, pad_y, 2.2, 4.4), -1.2, thickness_mm * 0.75)
     left_hinge_x = float(left_outer[:, 0].min()) - 10.0
     right_hinge_x = float(right_outer[:, 0].max()) + 10.0
     _extrude_polygon(lines, _capsule(left_hinge_x, float(left_outer[:, 0].min()) + 1.0, 0.0, tab_radius), 0.0, thickness_mm)
