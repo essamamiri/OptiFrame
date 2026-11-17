@@ -39,19 +39,30 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
     const camera = new THREE.PerspectiveCamera(28, 1, 0.005, 5);
 
     const frameMaterial = new THREE.MeshPhysicalMaterial({
-      color: "#3a2214", roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.1, transparent: true,
+      color: "#16110f", roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.1, transparent: true,
     });
-    // Clear glass the way product renders fake it: a body that is almost invisible, plus a
-    // reflection layer that only ever adds light (additive), so you see straight through the
-    // lens and it shows up only as soft glints along its curve and edge.
-    const glassBody = new THREE.MeshPhysicalMaterial({
-      color: 0xf2f7f4, roughness: 0.1, metalness: 0, envMapIntensity: 0,
-      transparent: true, opacity: 0.035, depthWrite: false, side: THREE.DoubleSide,
-    });
-    const glassReflection = new THREE.MeshPhysicalMaterial({
-      color: 0x000000, roughness: 0.12, metalness: 0, ior: 1.5, specularIntensity: 0.55,
-      envMapIntensity: 0.16, iridescence: 0.4, iridescenceIOR: 1.3, iridescenceThicknessRange: [200, 400],
-      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    // A photo studio for the glass to reflect: dark walls, three soft light boxes. This is
+    // what makes clear lenses read as glass in product renders (dark/light bands on the curve).
+    function studioEnvironment() {
+      const studio = new THREE.Scene();
+      studio.background = new THREE.Color("#1d1d1f");
+      const box = (w: number, h: number, x: number, y: number, z: number, intensity: number) => {
+        const panel = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: new THREE.Color(intensity, intensity, intensity), side: THREE.DoubleSide }));
+        panel.position.set(x, y, z);
+        panel.lookAt(0, 0, 0);
+        studio.add(panel);
+      };
+      box(6, 1.2, 0, 4, 2, 4);     // long strip overhead
+      box(1.4, 5, -5, 0.5, 2, 2.2); // tall box left
+      box(1.4, 5, 5, 0.5, -1, 1.4); // tall box right, dimmer
+      box(8, 0.6, 0, -3.5, 3, 0.6); // faint floor bounce
+      return pmrem.fromScene(studio, 0.02).texture;
+    }
+    const studio = studioEnvironment();
+    // Real clear glass: refracts whatever is behind it (frame, temples, page) and reflects the studio.
+    const glass = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff, metalness: 0, roughness: 0, transmission: 1, thickness: 0.0012, ior: 1.5,
+      specularIntensity: 1, envMap: studio, envMapIntensity: 1.1, side: THREE.DoubleSide,
     });
 
     /** Bend a flat lens into a meniscus: centre bulges forward, edge stays in the rim groove. */
@@ -90,7 +101,7 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
         if (object.name.startsWith("lens")) {
           object.geometry = object.geometry.clone();
           curveLens(object.geometry);
-          object.material = glassBody;
+          object.material = glass;
           object.renderOrder = 2;
 
           lenses.push({ mesh: object, side: object.name.endsWith("left") ? 1 : -1, home: object.position.clone() });
@@ -99,12 +110,6 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
           frameParts.push(object);
         }
       });
-      // Reflection layers are added after the traversal so they aren't mistaken for frame parts.
-      for (const lens of lenses) {
-        const reflection = new THREE.Mesh((lens.mesh as THREE.Mesh).geometry, glassReflection);
-        reflection.renderOrder = 3;
-        lens.mesh.add(reflection);
-      }
       root.add(model);
       resize();
     });
