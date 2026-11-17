@@ -17,7 +17,10 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
     if (!container) return;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    // Opaque canvas painted in the page colour, so real refraction has something to bend.
+    const pageColour = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() || "#e6e7e1";
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setClearColor(pageColour, 1);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.1;
@@ -38,16 +41,34 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
     const frameMaterial = new THREE.MeshPhysicalMaterial({
       color: "#3a2214", roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.1, transparent: true,
     });
-    // Clear glass: almost no body colour, strong reflections, and a drawn edge so the
-    // lens reads as a real cut piece with thickness rather than a frosted blob.
+    // Real lens glass: fully transmissive with refraction, a whisper of green in thick parts
+    // (like the edge of a real lens), clear-coat reflections, and a faint AR-coating rainbow.
     const glassMaterial = new THREE.MeshPhysicalMaterial({
-      color: 0xf6fbfc, roughness: 0.02, metalness: 0, ior: 1.5,
-      transparent: true, opacity: 0.24, depthWrite: false, side: THREE.DoubleSide,
-      clearcoat: 1, clearcoatRoughness: 0, envMapIntensity: 3, specularIntensity: 1,
-      iridescence: 0.6, iridescenceIOR: 1.3, iridescenceThicknessRange: [180, 420],
+      color: 0xffffff, metalness: 0, roughness: 0.015,
+      transmission: 1, thickness: 0.0016, ior: 1.5,
+      attenuationColor: new THREE.Color("#e4f1ea"), attenuationDistance: 0.06,
+      specularIntensity: 1, clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 1.3,
+      iridescence: 0.3, iridescenceIOR: 1.3, iridescenceThicknessRange: [200, 400],
+      side: THREE.DoubleSide,
     });
-    const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x7a8386, transparent: true, opacity: 0.9 });
-    const bevelMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
+
+    /** Bend a flat lens into a meniscus: centre bulges forward, edge stays in the rim groove. */
+    function curveLens(geometry: THREE.BufferGeometry, radius = 0.088) {
+      geometry.computeBoundingBox();
+      const centre = geometry.boundingBox!.getCenter(new THREE.Vector3());
+      const position = geometry.getAttribute("position");
+      let edge = 0;
+      for (let i = 0; i < position.count; i += 1) {
+        const dx = position.getX(i) - centre.x, dy = position.getY(i) - centre.y;
+        edge = Math.max(edge, dx * dx + dy * dy);
+      }
+      for (let i = 0; i < position.count; i += 1) {
+        const dx = position.getX(i) - centre.x, dy = position.getY(i) - centre.y;
+        position.setZ(i, position.getZ(i) + (edge - (dx * dx + dy * dy)) / (2 * radius));
+      }
+      position.needsUpdate = true;
+      geometry.computeVertexNormals();
+    }
 
     const root = new THREE.Group();
     scene.add(root);
@@ -65,16 +86,9 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
       model.traverse(object => {
         if (!(object instanceof THREE.Mesh)) return;
         if (object.name.startsWith("lens")) {
+          object.geometry = object.geometry.clone();
+          curveLens(object.geometry);
           object.material = glassMaterial;
-          object.renderOrder = 2;
-          // Front and back outlines of the lens: a darker cut edge, plus a bright bevel just inside it.
-          const edges = new THREE.LineSegments(new THREE.EdgesGeometry(object.geometry, 30), edgeMaterial);
-          const bevel = new THREE.LineSegments(new THREE.EdgesGeometry(object.geometry, 30), bevelMaterial);
-          object.geometry.computeBoundingBox();
-          const centre = object.geometry.boundingBox!.getCenter(new THREE.Vector3());
-          bevel.position.copy(centre).multiplyScalar(0.03);
-          bevel.scale.setScalar(0.97);
-          object.add(edges, bevel);
           lenses.push({ mesh: object, side: object.name.endsWith("left") ? 1 : -1, home: object.position.clone() });
         } else {
           object.material = frameMaterial;
