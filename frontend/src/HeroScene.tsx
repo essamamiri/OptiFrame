@@ -28,7 +28,7 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
 
     const scene = new THREE.Scene();
     const pmrem = new THREE.PMREMGenerator(renderer);
-    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.12).texture;
 
     const key = new THREE.DirectionalLight(0xffd2a0, 2.4);
     key.position.set(0.3, 0.5, 0.6);
@@ -41,15 +41,17 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
     const frameMaterial = new THREE.MeshPhysicalMaterial({
       color: "#3a2214", roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.1, transparent: true,
     });
-    // Real lens glass: fully transmissive with refraction, a whisper of green in thick parts
-    // (like the edge of a real lens), clear-coat reflections, and a faint AR-coating rainbow.
-    const glassMaterial = new THREE.MeshPhysicalMaterial({
-      color: 0xffffff, metalness: 0, roughness: 0.015,
-      transmission: 1, thickness: 0.0016, ior: 1.5,
-      attenuationColor: new THREE.Color("#e4f1ea"), attenuationDistance: 0.06,
-      specularIntensity: 1, clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 1.3,
-      iridescence: 0.3, iridescenceIOR: 1.3, iridescenceThicknessRange: [200, 400],
-      side: THREE.DoubleSide,
+    // Clear glass the way product renders fake it: a body that is almost invisible, plus a
+    // reflection layer that only ever adds light (additive), so you see straight through the
+    // lens and it shows up only as soft glints along its curve and edge.
+    const glassBody = new THREE.MeshPhysicalMaterial({
+      color: 0xf2f7f4, roughness: 0.1, metalness: 0, envMapIntensity: 0,
+      transparent: true, opacity: 0.035, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const glassReflection = new THREE.MeshPhysicalMaterial({
+      color: 0x000000, roughness: 0.12, metalness: 0, ior: 1.5, specularIntensity: 0.55,
+      envMapIntensity: 0.16, iridescence: 0.4, iridescenceIOR: 1.3, iridescenceThicknessRange: [200, 400],
+      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
     });
 
     /** Bend a flat lens into a meniscus: centre bulges forward, edge stays in the rim groove. */
@@ -88,13 +90,21 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
         if (object.name.startsWith("lens")) {
           object.geometry = object.geometry.clone();
           curveLens(object.geometry);
-          object.material = glassMaterial;
+          object.material = glassBody;
+          object.renderOrder = 2;
+
           lenses.push({ mesh: object, side: object.name.endsWith("left") ? 1 : -1, home: object.position.clone() });
         } else {
           object.material = frameMaterial;
           frameParts.push(object);
         }
       });
+      // Reflection layers are added after the traversal so they aren't mistaken for frame parts.
+      for (const lens of lenses) {
+        const reflection = new THREE.Mesh((lens.mesh as THREE.Mesh).geometry, glassReflection);
+        reflection.renderOrder = 3;
+        lens.mesh.add(reflection);
+      }
       root.add(model);
       resize();
     });
@@ -157,6 +167,8 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
         );
       }
       frameMaterial.opacity = rise;
+      const fading = rise < 0.999;
+      if (frameMaterial.transparent !== fading) { frameMaterial.transparent = fading; frameMaterial.needsUpdate = true; }
       frameMaterial.depthWrite = rise > 0.98;
       for (const part of frameParts) part.visible = rise > 0.01;
       root.position.y = 0;
