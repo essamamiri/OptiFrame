@@ -38,11 +38,16 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
     const frameMaterial = new THREE.MeshPhysicalMaterial({
       color: "#3a2214", roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.1, transparent: true,
     });
+    // Clear glass: almost no body colour, strong reflections, and a drawn edge so the
+    // lens reads as a real cut piece with thickness rather than a frosted blob.
     const glassMaterial = new THREE.MeshPhysicalMaterial({
-      color: 0xfff4e6, roughness: 0.03, transmission: 0.95, thickness: 0.002, ior: 1.52,
-      transparent: true, opacity: 0.32, side: THREE.DoubleSide, clearcoat: 1,
-      sheen: 1, sheenColor: new THREE.Color("#7fd6b0"), sheenRoughness: 0.3,
+      color: 0xf6fbfc, roughness: 0.02, metalness: 0, ior: 1.5,
+      transparent: true, opacity: 0.24, depthWrite: false, side: THREE.DoubleSide,
+      clearcoat: 1, clearcoatRoughness: 0, envMapIntensity: 3, specularIntensity: 1,
+      iridescence: 0.6, iridescenceIOR: 1.3, iridescenceThicknessRange: [180, 420],
     });
+    const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x7a8386, transparent: true, opacity: 0.9 });
+    const bevelMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
 
     const root = new THREE.Group();
     scene.add(root);
@@ -61,6 +66,15 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
         if (!(object instanceof THREE.Mesh)) return;
         if (object.name.startsWith("lens")) {
           object.material = glassMaterial;
+          object.renderOrder = 2;
+          // Front and back outlines of the lens: a darker cut edge, plus a bright bevel just inside it.
+          const edges = new THREE.LineSegments(new THREE.EdgesGeometry(object.geometry, 30), edgeMaterial);
+          const bevel = new THREE.LineSegments(new THREE.EdgesGeometry(object.geometry, 30), bevelMaterial);
+          object.geometry.computeBoundingBox();
+          const centre = object.geometry.boundingBox!.getCenter(new THREE.Vector3());
+          bevel.position.copy(centre).multiplyScalar(0.03);
+          bevel.scale.setScalar(0.97);
+          object.add(edges, bevel);
           lenses.push({ mesh: object, side: object.name.endsWith("left") ? 1 : -1, home: object.position.clone() });
         } else {
           object.material = frameMaterial;
@@ -100,23 +114,32 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
       smoothPointer.lerp(pointer, 0.05);
       const p = eased;
 
-      // 0 → .45 lenses alone; .35 → .75 frame rises and lenses settle; .75 → 1 the pair turns to face you.
-      const rise = span(p, 0.32, 0.72);
-      const settle = span(p, 0.42, 0.78);
-      const turn = span(p, 0.72, 1);
+      // Story beats:
+      //   0 → .32   the two lenses float on their own, tilted
+      //   .30 → .58 the frame rises up behind them
+      //   .42 → .62 the lenses straighten and line up in front of their rims
+      //   .62 → .74 they push straight back and click into place (small overshoot)
+      //   .76 → 1   the finished pair turns to a three-quarter view
+      const rise = span(p, 0.3, 0.58);
+      const align = span(p, 0.42, 0.62);
+      const push = clamp01((p - 0.62) / 0.12);
+      const turn = span(p, 0.76, 1);
       const idle = reduceMotion ? 0 : 1;
+      // easeOutBack: goes a hair past the seat, then settles — the "click".
+      const back = (v: number) => { const c = 1.2; const u = v - 1; return 1 + (c + 1) * u * u * u + c * u * u; };
+      const seated = push <= 0 ? 0 : back(push);
 
       for (const lens of lenses) {
-        const loose = 1 - settle;
+        const free = 1 - align;
         lens.mesh.position.set(
-          lens.home.x + lens.side * 0.012 * loose,
-          lens.home.y + loose * (0.01 + Math.sin(t * 1.1 + lens.side) * 0.003 * idle),
-          lens.home.z + 0.022 * loose,
+          lens.home.x + lens.side * 0.014 * free,
+          lens.home.y + free * (0.008 + Math.sin(t * 1.1 + lens.side) * 0.003 * idle),
+          lens.home.z + 0.034 * (1 - seated),
         );
         lens.mesh.rotation.set(
-          loose * (0.35 + Math.sin(t * 0.8 + lens.side) * 0.08 * idle),
-          loose * lens.side * 0.55,
-          loose * lens.side * 0.18,
+          free * (0.3 + Math.sin(t * 0.8 + lens.side) * 0.07 * idle),
+          free * lens.side * 0.5,
+          free * lens.side * 0.14,
         );
       }
       frameMaterial.opacity = rise;
@@ -131,7 +154,7 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
       const direction = new THREE.Vector3(Math.sin(yaw), pitch, Math.cos(yaw)).normalize();
       const vertical = THREE.MathUtils.degToRad(camera.fov);
       const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * camera.aspect);
-      const distance = (radius * THREE.MathUtils.lerp(1.2, 1.1, rise)) / Math.sin(Math.min(vertical, horizontal) / 2);
+      const distance = (radius * THREE.MathUtils.lerp(1.2, 1.08, rise)) / Math.sin(Math.min(vertical, horizontal) / 2);
       camera.position.copy(direction.multiplyScalar(distance));
       camera.lookAt(0, 0, 0);
       root.rotation.y = idle * Math.sin(t * 0.25) * 0.05 * (1 - turn * 0.6);
