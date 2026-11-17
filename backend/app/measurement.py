@@ -98,7 +98,7 @@ def _edge_sharpness(gray: np.ndarray, contour: np.ndarray) -> float:
         cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3),
         cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3),
     )
-    points = contour.reshape(-1, 2)
+    points = np.rint(contour.reshape(-1, 2)).astype(np.int32)
     if len(points) > 300:
         points = points[:: max(1, len(points) // 300)]
     values = gradient[
@@ -236,6 +236,34 @@ def _sheet_zone_candidates(rectified: np.ndarray, calibration: CalibrationReady)
     return sorted(candidates, key=lambda candidate: (candidate.area, candidate.score), reverse=True)
 
 
+def _snap_to_dark_ridge(gray: np.ndarray, contour: np.ndarray, calibration: CalibrationReady) -> np.ndarray:
+    """Move each contour point along the radial direction to the darkest pixel
+    of the rim line (sub-pixel), searching inward from the outer band edge."""
+    mm = calibration.millimetres_per_pixel
+    points = _resample_closed(contour, 360)
+    center = points.mean(axis=0)
+    radial = center - points
+    radial /= np.maximum(np.linalg.norm(radial, axis=1, keepdims=True), 1e-6)
+    steps = np.arange(-round(0.5 / mm), round(3.5 / mm) + 1, dtype=np.float32)
+    samples_x = (points[:, None, 0] + radial[:, None, 0] * steps[None]).astype(np.float32)
+    samples_y = (points[:, None, 1] + radial[:, None, 1] * steps[None]).astype(np.float32)
+    profile = cv2.remap(gray.astype(np.float32), samples_x, samples_y, cv2.INTER_LINEAR,
+                        borderMode=cv2.BORDER_REPLICATE)
+    best = np.argmin(profile, axis=1)
+    # Parabolic sub-pixel refinement around the minimum.
+    idx = np.clip(best, 1, len(steps) - 2)
+    rows = np.arange(len(points))
+    left, mid, right = profile[rows, idx - 1], profile[rows, idx], profile[rows, idx + 1]
+    denom = left - 2 * mid + right
+    offset = np.where(np.abs(denom) > 1e-6, 0.5 * (left - right) / denom, 0.0)
+    shift = steps[idx] + np.clip(offset, -1, 1)
+    # A few outliers (glare, print) shouldn't drag the outline: median-filter the shifts.
+    padded = np.concatenate([shift[-3:], shift, shift[:3]])
+    shift = np.median(np.lib.stride_tricks.sliding_window_view(padded, 7), axis=1)
+    snapped = points + radial * shift[:, None]
+    return snapped.astype(np.float32).reshape(-1, 1, 2)
+
+
 def _sheet_dark_rim_candidates(rectified: np.ndarray, calibration: CalibrationReady) -> list[Candidate]:
     """Detect the dark lens rim on the controlled printed sheet.
 
@@ -275,13 +303,19 @@ def _sheet_dark_rim_candidates(rectified: np.ndarray, calibration: CalibrationRe
         cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_radius, close_radius)),
     )
 
-    contours, _ = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    # RETR_EXTERNAL: the thresholded rim is a ring, and RETR_LIST returned
+    # both its outer and inner boundary as separate, equally scored candidates
+    # (~2-3 mm apart). Keep only the outer one, then snap it onto the centre
+    # of the dark rim line so the result doesn't depend on the band width.
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     candidates: list[Candidate] = []
     mm = calibration.millimetres_per_pixel
+    smooth_gray = cv2.GaussianBlur(gray, (0, 0), max(0.6, 0.15 / mm))
     for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:40]:
         if len(contour) < 80:
             continue
         contour = contour + np.array([[[x0, y0]]], dtype=np.int32)
+        contour = _snap_to_dark_ridge(smooth_gray, contour, calibration)
         bx, by, bw, bh = cv2.boundingRect(contour)
         size_mm = np.array([bw * mm, bh * mm])
         if not (18 <= size_mm[0] <= 90 and 12 <= size_mm[1] <= 75):
