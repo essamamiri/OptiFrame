@@ -65,6 +65,29 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
       specularIntensity: 1, envMap: studio, envMapIntensity: 1.1, side: THREE.DoubleSide,
     });
 
+    // The lens's cut edge: a soft bright band around the glass, so each lens reads as a solid
+    // piece of glass with thickness whether it floats alone or sits in the frame.
+    const edgeGlass = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff, roughness: 0.3, metalness: 0, envMap: studio, envMapIntensity: 1,
+      transparent: true, opacity: 0.75, depthWrite: false,
+    });
+    function edgeOf(geometry: THREE.BufferGeometry) {
+      const source = geometry.toNonIndexed();
+      const pos = source.getAttribute("position");
+      const keep: number[] = [];
+      const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+      const n = new THREE.Vector3(), ab = new THREE.Vector3();
+      for (let i = 0; i < pos.count; i += 3) {
+        a.fromBufferAttribute(pos, i); b.fromBufferAttribute(pos, i + 1); c.fromBufferAttribute(pos, i + 2);
+        n.subVectors(c, b).cross(ab.subVectors(a, b)).normalize();
+        if (Math.abs(n.z) < 0.55) keep.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+      }
+      const edge = new THREE.BufferGeometry();
+      edge.setAttribute("position", new THREE.Float32BufferAttribute(keep, 3));
+      edge.computeVertexNormals();
+      return edge;
+    }
+
     /** Bend a flat lens into a meniscus: centre bulges forward, edge stays in the rim groove. */
     function curveLens(geometry: THREE.BufferGeometry, radius = 0.088) {
       geometry.computeBoundingBox();
@@ -110,6 +133,11 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
           frameParts.push(object);
         }
       });
+      for (const lens of lenses) {
+        const edge = new THREE.Mesh(edgeOf((lens.mesh as THREE.Mesh).geometry), edgeGlass);
+        edge.renderOrder = 4;
+        lens.mesh.add(edge);
+      }
       root.add(model);
       resize();
     });
@@ -163,7 +191,7 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
         lens.mesh.position.set(
           lens.home.x + lens.side * 0.014 * free,
           lens.home.y + free * (0.008 + Math.sin(t * 1.1 + lens.side) * 0.003 * idle),
-          lens.home.z + 0.034 * (1 - seated),
+          lens.home.z + 0.0032 + 0.031 * (1 - seated),
         );
         lens.mesh.rotation.set(
           free * (0.3 + Math.sin(t * 0.8 + lens.side) * 0.07 * idle),
