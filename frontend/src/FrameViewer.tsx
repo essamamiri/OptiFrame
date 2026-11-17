@@ -21,10 +21,10 @@ const VIEWS = {
 } as const;
 type View = keyof typeof VIEWS;
 
-export default function FrameViewer({ glbUrl, caption }: { glbUrl: string; caption: string }) {
+export default function FrameViewer({ glbUrl, caption, initialFinish = 0 }: { glbUrl: string; caption: string; initialFinish?: number }) {
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<{ setFinish: (f: Finish) => void; setView: (v: View) => void; snapshot: () => string } | null>(null);
-  const [finish, setFinish] = useState(0);
+  const [finish, setFinish] = useState(initialFinish);
   const [view, setView] = useState<View>("3/4");
   const [ready, setReady] = useState(false);
 

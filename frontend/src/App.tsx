@@ -1,16 +1,5 @@
 import { ChangeEvent, Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Camera,
-  Check,
-  CircleHelp,
-  Glasses,
-  ImagePlus,
-  RotateCcw,
-  ScanLine,
-  ShieldCheck,
-  Download,
-  LoaderCircle,
-} from "lucide-react";
+import { Camera, Check, Download, ImagePlus, LoaderCircle, RotateCcw } from "lucide-react";
 import {
   CaptureReceipt,
   Eye,
@@ -22,18 +11,27 @@ import {
 import { SAMPLE_LENSES } from "./sampleLenses";
 
 const FrameViewer = lazy(() => import("./FrameViewer"));
+const HeroScene = lazy(() => import("./HeroScene"));
 
 const MAX_FILE_SIZE = 4 * 1024 * 1024;
+type Step = "home" | Eye | "frame";
+type Point = [number, number];
 
-function normalizeContour(points: [number, number][]) {
+const STEPS: { id: Exclude<Step, "home">; label: string }[] = [
+  { id: "left", label: "Left lens" },
+  { id: "right", label: "Right lens" },
+  { id: "frame", label: "Frame" },
+];
+
+function normalizeContour(points: Point[]) {
   const xs = points.map(point => point[0]);
   const ys = points.map(point => point[1]);
   const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
   const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
-  return points.map(([x, y]) => [x - cx, y - cy] as [number, number]);
+  return points.map(([x, y]) => [x - cx, y - cy] as Point);
 }
 
-function landscapeContour(points: [number, number][]) {
+function landscapeContour(points: Point[]) {
   const normalized = normalizeContour(points);
   if (normalized.length < 3) return normalized;
   const meanX = normalized.reduce((sum, [x]) => sum + x, 0) / normalized.length;
@@ -52,32 +50,99 @@ function landscapeContour(points: [number, number][]) {
   let leveled = normalized.map(([x, y]) => {
     const dx = x - meanX;
     const dy = y - meanY;
-    return [dx * cos - dy * sin, dx * sin + dy * cos] as [number, number];
+    return [dx * cos - dy * sin, dx * sin + dy * cos] as Point;
   });
-  let xs = leveled.map(point => point[0]);
-  let ys = leveled.map(point => point[1]);
+  const xs = leveled.map(point => point[0]);
+  const ys = leveled.map(point => point[1]);
   if (Math.max(...ys) - Math.min(...ys) > Math.max(...xs) - Math.min(...xs)) {
-    leveled = leveled.map(([x, y]) => [y, -x] as [number, number]);
+    leveled = leveled.map(([x, y]) => [y, -x] as Point);
   }
   return normalizeContour(leveled);
 }
 
-function offsetContour(points: [number, number][], offset: number) {
+function offsetContour(points: Point[], offset: number) {
   return points.map(([x, y]) => {
     const length = Math.hypot(x, y) || 1;
-    return [x + (x / length) * offset, y + (y / length) * offset] as [number, number];
+    return [x + (x / length) * offset, y + (y / length) * offset] as Point;
   });
 }
 
-function contourPath(points: [number, number][], dx = 0, dy = 0) {
+function contourPath(points: Point[], dx = 0, dy = 0) {
   if (!points.length) return "";
   return points.map(([x, y], index) => `${index === 0 ? "M" : "L"} ${(x + dx).toFixed(2)} ${(y + dy).toFixed(2)}`).join(" ") + " Z";
 }
 
+function mm(value: number, digits = 2) {
+  return value.toFixed(digits);
+}
+
+/** The measured lens drawn like an optician's tracing: real 5 mm grid, A and B dimension lines. */
+function LensDrawing({ contour, widthA, heightB, placeholder = false }: {
+  contour: Point[];
+  widthA?: number;
+  heightB?: number;
+  placeholder?: boolean;
+}) {
+  const shape = useMemo(() => landscapeContour(contour), [contour]);
+  const xs = shape.map(point => point[0]);
+  const ys = shape.map(point => point[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const padLeft = 8, padTop = 8, padRight = 20, padBottom = 19;
+  const viewX = minX - padLeft;
+  const viewY = minY - padTop;
+  const viewW = maxX - minX + padLeft + padRight;
+  const viewH = maxY - minY + padTop + padBottom;
+  const dimA = maxY + 11;
+  const dimB = maxX + 12;
+  const gap = 1.6;
+  const labelA = placeholder ? "A" : `${mm(widthA ?? maxX - minX)}`;
+  const labelB = placeholder ? "B" : `${mm(heightB ?? maxY - minY)}`;
+  const gridStart = (value: number) => Math.floor(value / 5) * 5;
+
+  return (
+    <svg
+      className={`lens-drawing ${placeholder ? "is-placeholder" : "is-measured"}`}
+      viewBox={`${viewX} ${viewY} ${viewW} ${viewH}`}
+      role="img"
+      aria-label={placeholder ? "Example lens outline" : `Measured lens outline, width ${labelA} mm, height ${labelB} mm`}
+    >
+      <defs>
+        <marker id="dim-arrow" viewBox="0 0 6 6" refX="5.4" refY="3" markerWidth="2.6" markerHeight="2.6" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+          <path d="M0 0.6 L5.6 3 L0 5.4" fill="none" className="dim-arrow" />
+        </marker>
+      </defs>
+      <g className="mm-grid" aria-hidden="true">
+        {Array.from({ length: Math.ceil(viewW / 5) + 2 }, (_, i) => gridStart(viewX) + i * 5).map(x => (
+          <line key={`x${x}`} x1={x} x2={x} y1={viewY} y2={viewY + viewH} className={x % 10 === 0 ? "major" : ""} />
+        ))}
+        {Array.from({ length: Math.ceil(viewH / 5) + 2 }, (_, i) => gridStart(viewY) + i * 5).map(y => (
+          <line key={`y${y}`} y1={y} y2={y} x1={viewX} x2={viewX + viewW} className={y % 10 === 0 ? "major" : ""} />
+        ))}
+      </g>
+      <path className="lens-fill" d={contourPath(shape)} />
+      <path className="lens-line" d={contourPath(shape)} pathLength={1} />
+      <g className="dims">
+        <line className="ext" x1={minX} x2={minX} y1={maxY + gap} y2={dimA + 2} />
+        <line className="ext" x1={maxX} x2={maxX} y1={maxY + gap} y2={dimA + 2} />
+        <line className="dim" x1={minX} x2={maxX} y1={dimA} y2={dimA} markerStart="url(#dim-arrow)" markerEnd="url(#dim-arrow)" />
+        <text className="dim-label" x={(minX + maxX) / 2} y={dimA + 5.4} textAnchor="middle">{labelA}</text>
+        <line className="ext" y1={minY} y2={minY} x1={maxX + gap} x2={dimB + 2} />
+        <line className="ext" y1={maxY} y2={maxY} x1={maxX + gap} x2={dimB + 2} />
+        <line className="dim" y1={minY} y2={maxY} x1={dimB} x2={dimB} markerStart="url(#dim-arrow)" markerEnd="url(#dim-arrow)" />
+        <text className="dim-label" x={dimB + 5.2} y={(minY + maxY) / 2} textAnchor="middle" transform={`rotate(-90 ${dimB + 5.2} ${(minY + maxY) / 2})`}>{labelB}</text>
+      </g>
+    </svg>
+  );
+}
+
 function App() {
-  const [eye, setEye] = useState<Eye>("left");
+  const [step, setStep] = useState<Step>(() => (new URLSearchParams(window.location.search).has("demo") ? "frame" : "home"));
+  const eye: Eye = step === "right" ? "right" : "left";
   const [images, setImages] = useState<Record<Eye, File | null>>({ left: null, right: null });
+  const [receipts, setReceipts] = useState<Record<Eye, CaptureReceipt | null>>({ left: null, right: null });
   const imageFile = images[eye];
+  const receipt = receipts[eye];
   const captureMode = "loose";
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -86,15 +151,11 @@ function App() {
   const [rimWidth, setRimWidth] = useState(4);
   const [frameThickness, setFrameThickness] = useState(3);
   const [clearance, setClearance] = useState(0.3);
-  const [receipts, setReceipts] = useState<Record<Eye, CaptureReceipt | null>>({ left: null, right: null });
-  const receipt = receipts[eye];
-  function setImageFile(file: File | null) { setImages(previous => ({ ...previous, [eye]: file })); }
-  function setReceipt(value: CaptureReceipt | null) { setReceipts(previous => ({ ...previous, [eye]: value })); }
-  const measuredCount = (["left", "right"] as Eye[]).filter(side => receipts[side]?.measurement?.status === "measured").length;
   const cameraInput = useRef<HTMLInputElement>(null);
   const galleryInput = useRef<HTMLInputElement>(null);
   const calibration = receipt?.calibration;
   const measurement = receipt?.measurement;
+  const measured = measurement?.status === "measured" ? measurement : null;
   const measuredLeft = receipts.left?.measurement?.status === "measured" ? receipts.left.measurement as LensMeasurement : null;
   const measuredRight = receipts.right?.measurement?.status === "measured" ? receipts.right.measurement as LensMeasurement : null;
   const [useSample, setUseSample] = useState(() => new URLSearchParams(window.location.search).has("demo"));
@@ -103,6 +164,51 @@ function App() {
   const rightMeasurement = measuredRight ?? (usingSample ? SAMPLE_LENSES.right : null);
   const [glbUrl, setGlbUrl] = useState("");
   const [frameError, setFrameError] = useState("");
+  const [heroGlb, setHeroGlb] = useState("");
+  const storyRef = useRef<HTMLElement>(null);
+  const storyProgress = useRef(0);
+  const [chapter, setChapter] = useState(0);
+
+  // Pinned scroll story on the landing page: 0..1 across the tall section.
+  useEffect(() => {
+    if (step !== "home") return;
+    let frame = 0;
+    function update() {
+      frame = 0;
+      const section = storyRef.current;
+      if (!section) return;
+      const rect = section.getBoundingClientRect();
+      const travel = Math.max(rect.height - window.innerHeight, 1);
+      const p = Math.min(1, Math.max(0, -rect.top / travel));
+      storyProgress.current = p;
+      setChapter(p < 0.24 ? 0 : p < 0.5 ? 1 : p < 0.76 ? 2 : 3);
+    }
+    function onScroll() { if (!frame) frame = requestAnimationFrame(update); }
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => { window.removeEventListener("scroll", onScroll); window.removeEventListener("resize", onScroll); cancelAnimationFrame(frame); };
+  }, [step]);
+
+  function setImageFile(file: File | null) { setImages(previous => ({ ...previous, [eye]: file })); }
+  function setReceipt(value: CaptureReceipt | null) { setReceipts(previous => ({ ...previous, [eye]: value })); }
+  function goTo(next: Step) {
+    setStep(next);
+    setError("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  // The landing page's product shot: a frame built from the sample lenses.
+  useEffect(() => {
+    if (step !== "home" || heroGlb) return;
+    const controller = new AbortController();
+    fetchFrameGlb(SAMPLE_LENSES.left, SAMPLE_LENSES.right, {
+      bridgeWidthMm: 18, rimWidthMm: 4, thicknessMm: 3, clearanceMm: 0.3,
+    }, controller.signal)
+      .then(blob => setHeroGlb(URL.createObjectURL(blob)))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [step, heroGlb]);
 
   useEffect(() => {
     if (!leftMeasurement || !rightMeasurement) return;
@@ -124,44 +230,22 @@ function App() {
     }, 350);
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, [leftMeasurement, rightMeasurement, bridgeWidth, rimWidth, frameThickness, clearance]);
-  const fitReport = leftMeasurement && rightMeasurement ? {
-    symmetryDelta: Math.abs(leftMeasurement.width_a_mm - rightMeasurement.width_a_mm) + Math.abs(leftMeasurement.height_b_mm - rightMeasurement.height_b_mm),
-    averageConfidence: (leftMeasurement.confidence + rightMeasurement.confidence) / 2,
-    printableWidth: leftMeasurement.width_a_mm + rightMeasurement.width_a_mm + bridgeWidth + rimWidth * 4 + 20,
-  } : null;
-  const deliveryChecks = [
-    { label: "Mobile photo capture", done: true },
-    { label: "Reference correction", done: calibration?.status === "calibrated" },
-    { label: "A / B / perimeter", done: measurement?.status === "measured" },
-    { label: "1:1 SVG export", done: measurement?.status === "measured" },
-    { label: "Two-lens STL", done: Boolean(leftMeasurement && rightMeasurement) },
-  ];
 
-  const previewUrl = useMemo(
-    () => (imageFile ? URL.createObjectURL(imageFile) : ""),
-    [imageFile],
-  );
-
-  useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
-  }, [previewUrl]);
+  const previewUrl = useMemo(() => (imageFile ? URL.createObjectURL(imageFile) : ""), [imageFile]);
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
   function chooseImage(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-
     if (!["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"].includes(file.type)) {
-      setError("Choose an original JPG, PNG, HEIC, HEIF, or WebP image.");
+      setError("This file type isn't supported. Use a JPG, PNG, HEIC or WebP photo.");
       return;
     }
     if (file.size > MAX_FILE_SIZE) {
-      setError("This image is larger than 4 MB. Retake it at a smaller resolution or choose a smaller original.");
+      setError("This photo is over 4 MB. Take it again at a lower resolution, or choose a smaller original.");
       return;
     }
-
     setError("");
     setReceipt(null);
     setImageFile(file);
@@ -173,37 +257,28 @@ function App() {
     setError("");
   }
 
-  async function continueCapture() {
-    if (!imageFile) {
-      setError("Take or choose a photo first.");
-      return;
-    }
-
+  async function measureLens() {
+    if (!imageFile) return;
     setIsSubmitting(true);
     setError("");
     setReceipt(null);
     try {
-      const response = await submitCapture(imageFile, captureMode, eye);
-      setReceipt(response);
+      setReceipt(await submitCapture(imageFile, captureMode, eye));
     } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "We could not validate the image. Please try again.",
-      );
+      setError(caught instanceof Error ? caught.message : "The photo couldn't be sent. Check your connection and measure again.");
     } finally {
       setIsSubmitting(false);
     }
   }
 
   function downloadOutline() {
-    if (measurement?.status !== "measured" || measurement.contour_mm.length < 3) return;
-    const points = measurement.contour_mm;
+    if (!measured || measured.contour_mm.length < 3) return;
+    const points = measured.contour_mm;
     const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
     const minX = Math.min(...xs), minY = Math.min(...ys);
     const width = Math.max(...xs) - minX + 4, height = Math.max(...ys) - minY + 4;
     if (![width, height].every(v => Number.isFinite(v) && v > 0)) return;
-    const contour = points.map(([x,y]) => `${x-minX+2},${y-minY+2}`).join(" ");
+    const contour = points.map(([x, y]) => `${x - minX + 2},${y - minY + 2}`).join(" ");
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}mm" height="${height}mm" viewBox="0 0 ${width} ${height}"><polygon points="${contour}" fill="none" stroke="black" stroke-width="0.2" /></svg>`;
     const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
     const link = document.createElement("a"); link.href = url; link.download = `${eye}-lens-1to1.svg`; link.click();
@@ -211,10 +286,7 @@ function App() {
   }
 
   async function downloadFrame(layout: "assembled" | "print" = "assembled") {
-    if (!leftMeasurement || !rightMeasurement) {
-      setError("Measure both lenses first.");
-      return;
-    }
+    if (!leftMeasurement || !rightMeasurement) return;
     setIsGeneratingFrame(true);
     setError("");
     try {
@@ -228,23 +300,10 @@ function App() {
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The frame STL could not be generated.");
+      setError(caught instanceof Error ? caught.message : "The frame file couldn't be generated. Try again.");
     } finally {
       setIsGeneratingFrame(false);
     }
-  }
-
-  async function copyDemoSummary() {
-    if (!leftMeasurement || !rightMeasurement || !fitReport) return;
-    const summary = [
-      "OptiFrame demo:",
-      `Left lens: ${leftMeasurement.width_a_mm.toFixed(2)} x ${leftMeasurement.height_b_mm.toFixed(2)} mm`,
-      `Right lens: ${rightMeasurement.width_a_mm.toFixed(2)} x ${rightMeasurement.height_b_mm.toFixed(2)} mm`,
-      `CAD: bridge ${bridgeWidth.toFixed(1)} mm, rim ${rimWidth.toFixed(1)} mm, thickness ${frameThickness.toFixed(1)} mm, clearance ${clearance.toFixed(1)} mm`,
-      `Fit confidence: ${(fitReport.averageConfidence * 100).toFixed(0)}%`,
-      "Export: 1:1 SVG contours + printable STL frame front",
-    ].join("\n");
-    await navigator.clipboard.writeText(summary).catch(() => undefined);
   }
 
   function downloadFitCheck() {
@@ -261,9 +320,9 @@ function App() {
 <rect width="100%" height="100%" y="${(-height / 2).toFixed(2)}" fill="white"/>
 <path d="${contourPath(left, leftX, 0)}" fill="none" stroke="black" stroke-width="0.25"/>
 <path d="${contourPath(right, rightX, 0)}" fill="none" stroke="black" stroke-width="0.25"/>
-<path d="${contourPath(leftOpening, leftX, 0)}" fill="none" stroke="#00a36c" stroke-width="0.35"/>
-<path d="${contourPath(rightOpening, rightX, 0)}" fill="none" stroke="#00a36c" stroke-width="0.35"/>
-<text x="2" y="${(-height / 2 + 5).toFixed(2)}" font-size="3" fill="black">Black = measured lens. Green = frame opening with ${clearance.toFixed(1)} mm clearance. Print at 100%.</text>
+<path d="${contourPath(leftOpening, leftX, 0)}" fill="none" stroke="#0071e3" stroke-width="0.35"/>
+<path d="${contourPath(rightOpening, rightX, 0)}" fill="none" stroke="#0071e3" stroke-width="0.35"/>
+<text x="2" y="${(-height / 2 + 5).toFixed(2)}" font-size="3" fill="black">Black = measured lens. Blue = frame opening with ${clearance.toFixed(1)} mm clearance. Print at 100%.</text>
 </svg>`;
     const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
     const link = document.createElement("a");
@@ -273,324 +332,289 @@ function App() {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  const stepDone = (id: Step) => (id === "left" || id === "right") && receipts[id]?.measurement?.status === "measured";
+  const otherEye: Eye = eye === "left" ? "right" : "left";
+  const nextStep: Step = eye === "left" ? (measuredRight ? "frame" : "right") : (measuredLeft ? "frame" : "left");
+  const calibrationFailed = calibration?.status === "retry";
+  const measurementFailed = measurement?.status === "retry";
+
+  const nav = (
+    <header className="nav">
+      <div className="nav-inner">
+        <button className="wordmark" type="button" onClick={() => goTo("home")} aria-label="OptiFrame home">
+          <svg className="mark" viewBox="0 0 40 18" aria-hidden="true">
+            <ellipse cx="10" cy="9" rx="8" ry="7" />
+            <ellipse cx="30" cy="9" rx="8" ry="7" />
+            <path d="M18 7.5 Q20 5.5 22 7.5" />
+          </svg>
+          OptiFrame
+        </button>
+        {step === "home" ? (
+          <button className="btn small" type="button" onClick={() => goTo("left")}>Start measuring</button>
+        ) : (
+          <nav aria-label="Steps">
+            <ol className="steps">
+              {STEPS.map((item, index) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    className={`${step === item.id ? "is-current" : ""} ${stepDone(item.id) ? "is-done" : ""}`}
+                    aria-current={step === item.id ? "step" : undefined}
+                    onClick={() => goTo(item.id)}
+                    disabled={isSubmitting}
+                  >
+                    <span className="step-dot">{stepDone(item.id) ? <Check size={11} strokeWidth={3.2} aria-hidden="true" /> : index + 1}</span>
+                    <span className="step-label">{item.label}</span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </nav>
+        )}
+      </div>
+    </header>
+  );
+
+  if (step === "home") {
+    return (
+      <div className="app">
+        {nav}
+        <main>
+          <section className="scrolly" ref={storyRef} aria-label="How OptiFrame works">
+            <div className="scrolly-pin" data-chapter={chapter}>
+              <div className="scrolly-glow" aria-hidden="true" />
+              {heroGlb && (
+                <Suspense fallback={null}>
+                  <HeroScene glbUrl={heroGlb} progress={storyProgress} />
+                </Suspense>
+              )}
+
+              <div className={`chapter chapter-hero ${chapter === 0 ? "is-active" : ""}`}>
+                <h1 className="hero-title">
+                  <span className="line"><span>A new frame</span></span>
+                  <span className="line"><span>for the lenses</span></span>
+                  <span className="line"><span>you already have.</span></span>
+                </h1>
+                <p className="hero-sub">Photograph each lens next to a bank card. OptiFrame traces its exact outline and turns it into a frame you can 3D print.</p>
+                <div className="hero-actions">
+                  <button className="btn" type="button" onClick={() => goTo("left")}>Measure your lenses</button>
+                  <button className="link" type="button" onClick={() => { setUseSample(true); goTo("frame"); }}>See a sample frame</button>
+                </div>
+              </div>
+
+              {[
+                { n: 1, title: "Keep the lenses.", body: "Old prescription glasses, a snapped frame, a pair you’ve outgrown. The lenses are usually fine, so they’re what you start with." },
+                { n: 2, title: "Photograph each one next to a card.", body: "A bank card gives the photo its scale. OptiFrame finds the lens edge and measures its width, height and full outline in millimetres." },
+                { n: 3, title: "Print a frame that fits them.", body: "Download the frame file, print it, and press the lenses into rims shaped from their own outlines." },
+              ].map(item => (
+                <div key={item.n} className={`chapter ${chapter === item.n ? "is-active" : ""}`}>
+                  <p className="chapter-count"><span>{item.n}</span> / 3</p>
+                  <h2>{item.title}</h2>
+                  <p>{item.body}</p>
+                  {item.n === 3 && <button className="btn" type="button" onClick={() => goTo("left")}>Measure your lenses</button>}
+                </div>
+              ))}
+
+              <div className="scroll-cue" aria-hidden="true"><span style={{ transform: `scaleY(${0.08 + chapter / 3 * 0.92})` }} /></div>
+            </div>
+          </section>
+
+          <section className="story">
+            <div className="showcase">
+              <div className="showcase-copy">
+                <h2 className="story-title">What you get back from one photo</h2>
+                <p>A tracing of the lens on a 5 mm grid, with its boxed width and height, the way an optician’s tracer would read it. Download it as a 1:1 outline, or carry it straight into the frame.</p>
+              </div>
+              <div className="showcase-art">
+                <LensDrawing contour={SAMPLE_LENSES.left.contour_mm} widthA={SAMPLE_LENSES.left.width_a_mm} heightB={SAMPLE_LENSES.left.height_b_mm} />
+              </div>
+            </div>
+          </section>
+
+          <section className="closing">
+            <h2>Got your lenses nearby?</h2>
+            <p>It takes about a minute per lens.</p>
+            <button className="btn" type="button" onClick={() => goTo("left")}>Measure your lenses</button>
+          </section>
+        </main>
+        <footer className="footer">Photos are measured in memory and never stored.</footer>
+      </div>
+    );
+  }
+
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="#top" aria-label="OptiFrame home">
-          <span className="brand-mark"><Glasses size={25} strokeWidth={2.25} /></span>
-          <span>OptiFrame</span>
-        </a>
-        <a className="help-button" href="#photo-guide" aria-label="Jump to capture guide">
-          <CircleHelp size={20} />
-        </a>
-      </header>
+    <div className="app">
+      {nav}
 
-      <main id="top">
-        <section className="progress-wrap" aria-label="Progress">
-          <div className="progress-copy">
-            <span>{measuredCount} / 2 lenses measured</span>
-            <span>Measure</span>
-          </div>
-          <div className="progress-track"><span style={{width: `${measuredCount * 50}%`}} /></div>
-          <ol className="progress-labels">
-            <li>Capture</li>
-            <li className="active">Measure</li>
-            <li>Review</li>
-            <li>STL</li>
-          </ol>
-        </section>
-
-        <section className="hero">
-          <div className="eyebrow"><ScanLine size={14} /> Precision lens workspace</div>
-          <h1>Old lenses.<br /><span>New possibilities.</span></h1>
-          <p>Choose a lens. Take a photo. Reveal its shape and dimensions.</p>
-        </section>
-
-        <section className="demo-status" aria-label="Challenge deliverables">
-          <div>
-            <span className="status-kicker">Consignes check</span>
-            <strong>Photo {"->"} millimetres {"->"} STL</strong>
-          </div>
-          <ul>
-            {deliveryChecks.map(item => (
-              <li key={item.label} className={item.done ? "done" : ""}>
-                <Check size={15} />
-                {item.label}
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <section className="capture-card">
-          <fieldset className="field-group compact" disabled={isSubmitting}>
-            <legend>1. Choose a lens</legend>
-            <div className="segmented-control">
-              <button
-                type="button"
-                className={eye === "left" ? "active" : ""}
-                aria-pressed={eye === "left"}
-                onClick={() => { setEye("left"); setError(""); }}
-              >Left lens <small>{receipts.left?.measurement?.status === "measured" ? "Measured" : images.left ? "Photo ready" : "Add photo"}</small></button>
-              <button
-                type="button"
-                className={eye === "right" ? "active" : ""}
-                aria-pressed={eye === "right"}
-                onClick={() => { setEye("right"); setError(""); }}
-              >Right lens <small>{receipts.right?.measurement?.status === "measured" ? "Measured" : images.right ? "Photo ready" : "Add photo"}</small></button>
-            </div>
-            <p className="orientation-note">Choose from the wearer’s point of view.</p>
-          </fieldset>
-
-          <div className="field-group" id="photo-guide">
-            <div className="section-heading">
-              <h2>2. Capture {eye} lens</h2>
-              <span>Original images only</span>
-            </div>
-
-            {!imageFile ? (
-              <div className="capture-stage">
-                <div className="scan-target" aria-hidden="true">
-                  <Camera size={46} strokeWidth={1.4} />
-                  <span>READY TO CAPTURE</span>
-                  <i className="corner top-left" /><i className="corner top-right" />
-                  <i className="corner bottom-left" /><i className="corner bottom-right" />
-                </div>
-                <p>Keep one loose lens and all four sheet markers visible.</p>
-                <div className="capture-actions">
-                  <button className="primary-button" type="button" onClick={() => cameraInput.current?.click()}>
-                    <Camera size={20} /> Take photo
-                  </button>
-                  <button className="secondary-button" type="button" onClick={() => galleryInput.current?.click()}>
-                    <ImagePlus size={20} /> Upload photo
-                  </button>
-                </div>
+      {step !== "frame" ? (
+        <main className="flow" key={eye}>
+          <div className={`stage ${isSubmitting ? "is-scanning" : ""}`} aria-busy={isSubmitting}>
+            {measured ? (
+              <LensDrawing key={receipt?.capture_id} contour={measured.contour_mm} widthA={measured.width_a_mm} heightB={measured.height_b_mm} />
+            ) : imageFile ? (
+              <div className="stage-photo">
+                {imageFile.type === "image/heic" || imageFile.type === "image/heif"
+                  ? <p className="stage-note">HEIC photo selected. It will show here once measured.</p>
+                  : <img src={previewUrl} alt={`Photo of the ${eye} lens next to the card`} />}
+                {isSubmitting && <div className="scan-line" aria-hidden="true" />}
               </div>
             ) : (
-              <div className={`preview-stage ${isSubmitting ? "scanning" : ""}`} aria-busy={isSubmitting}>
-                {isSubmitting && <div className="scan-overlay"><div className="scan-sweep" /><span><LoaderCircle size={16} /> Detecting reference and lens…</span></div>}
-                {imageFile.type === "image/heic" || imageFile.type === "image/heif" ? (
-                  <p className="preview-placeholder">HEIC/HEIF selected. The calibrated preview will appear after processing.</p>
-                ) : <img src={previewUrl} alt="Selected lens and reference card" />}
-                <button className="replace-button" type="button" disabled={isSubmitting} onClick={resetCapture}>
-                  <RotateCcw size={17} /> Replace
-                </button>
-                <div className="file-summary">
-                  <span>{imageFile.name}</span>
-                  <span>{(imageFile.size / 1024 / 1024).toFixed(1)} MB</span>
-                </div>
-              </div>
+              <LensDrawing contour={SAMPLE_LENSES.left.contour_mm} placeholder />
             )}
-
-            <input ref={cameraInput} hidden disabled={isSubmitting} type="file" accept="image/*" capture="environment" onChange={chooseImage} />
-            <input ref={galleryInput} hidden disabled={isSubmitting} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onChange={chooseImage} />
           </div>
 
-          <details className="photo-tips">
-            <summary>How to get an accurate photo</summary>
-            <ul className="checklist" aria-label="Photo checklist">
-              <li><Check size={16} /> Use the printed marker sheet. Keep all four black markers visible.</li>
-              <li><Check size={16} /> Place one loose lens inside the lens zone.</li>
-              <li><Check size={16} /> Photograph from above; keep the sheet flat.</li>
-              <li><Check size={16} /> Keep the whole lens visible, with no blur or strong glare.</li>
-            </ul>
-          </details>
+          <section className="panel" aria-labelledby="step-title">
+            <p className="step-count">Step {eye === "left" ? 1 : 2} of 3</p>
+            <h1 id="step-title" className="title">{eye === "left" ? "Left lens" : "Right lens"}</h1>
 
-          {error && <p className="error-message" role="alert">{error}</p>}
-
-          {calibration?.status === "retry" && (
-            <div className="error-message" role="alert">
-              <strong>Retake photo — calibration incomplete</strong>
-              <p>{calibration.message}</p>
-              <button className="secondary-button" type="button" onClick={resetCapture}>Choose a new photo</button>
-            </div>
-          )}
-
-          {measurement?.status === "retry" && (
-            <div className="error-message" role="alert">
-              <strong>Retake photo — lens measurement incomplete</strong>
-              <p>{measurement.message}</p>
-              <button className="secondary-button" type="button" onClick={resetCapture}>Choose a new photo</button>
-            </div>
-          )}
-
-          {calibration?.status === "calibrated" && receipt ? (
-            <section className="calibration-result" aria-label="Calibration result">
-              <div className="success-card" role="status">
-                <span><Check size={20} /></span>
-                <div>
-                  <strong>{measurement?.status === "measured" ? "Shape captured." : "Reference card calibrated"}</strong>
-                  <p>{receipt.eye} eye · loose lens only</p>
-                </div>
-              </div>
-              <figure className="rectified-preview">
-                <div className="rectified-image">
-                  <img src={calibration.preview_data_url} alt="Top-down rectified photo with detected reference card and lens overlays" />
-                  <svg viewBox={`0 0 ${calibration.preview_width_px} ${calibration.preview_height_px}`} aria-hidden="true">
-                    <polygon className="card-outline" points={calibration.rectified_card_corners_px.map(point => point.join(",")).join(" ")} />
-                    {calibration.rectified_card_corners_px.map(([x, y], index) => (
-                      <circle className="card-corner" key={index} cx={x} cy={y} r={calibration.preview_width_px / 130} />
-                    ))}
-                    {calibration.exclusion_zones_px.map((zone, index) => (
-                      <polygon className="marker-outline" key={index} points={zone.map(point => point.join(",")).join(" ")} />
-                    ))}
-                    {measurement?.status === "measured" && measurement.detected_outer_contour_px && (
-                      <polygon className="outer-contour" points={measurement.detected_outer_contour_px.map(point => point.join(",")).join(" ")} />
-                    )}
-                    {measurement?.status === "measured" && (
-                      <polygon className="lens-contour" points={measurement.contour_px.map(point => point.join(",")).join(" ")} />
-                    )}
-                  </svg>
-                </div>
-                <figcaption>
-                  Top-down preview · green marks the reference · {measurement?.status === "measured" ? "orange marks the measured lens contour" : "no reliable lens contour was found"}
-                </figcaption>
-              </figure>
-              {measurement?.status === "measured" && (
-                <dl className="measurement-grid" aria-label="Lens measurements">
-                  <div><dt>Width A</dt><dd>{measurement.width_a_mm.toFixed(2)} <small>mm</small></dd></div>
-                  <div><dt>Height B</dt><dd>{measurement.height_b_mm.toFixed(2)} <small>mm</small></dd></div>
-                  <div><dt>Perimeter</dt><dd>{measurement.perimeter_mm.toFixed(2)} <small>mm</small></dd></div>
+            {measured ? (
+              <>
+                <dl className="readout">
+                  <div><dt>Width A</dt><dd>{mm(measured.width_a_mm)}<span>mm</span></dd></div>
+                  <div><dt>Height B</dt><dd>{mm(measured.height_b_mm)}<span>mm</span></dd></div>
+                  <div><dt>Perimeter</dt><dd>{mm(measured.perimeter_mm, 1)}<span>mm</span></dd></div>
                 </dl>
-              )}
-              <dl className="calibration-details">
-                <div><dt>Reference</dt><dd>{calibration.reference_label}</dd></div>
-                <div><dt>Preview scale</dt><dd>{calibration.millimetres_per_pixel.toFixed(4)} mm / pixel</dd></div>
-                {measurement?.status === "measured" && <div><dt>Method</dt><dd>{measurement.method === "ml_lens_mask" ? "ML lens mask" : "Direct detected contour"}</dd></div>}
-              </dl>
-              {measurement?.status === "measured" && (
-                <div className="pipeline-view" aria-label="Step by step image pipeline">
-                  <div>
-                    <span>1</span>
-                    <strong>Reference</strong>
-                    <small>{calibration.reference_label}</small>
-                  </div>
-                  <div>
-                    <span>2</span>
-                    <strong>Redressed</strong>
-                    <small>{calibration.millimetres_per_pixel.toFixed(4)} mm / px</small>
-                  </div>
-                  <div>
-                    <span>3</span>
-                    <strong>Contour</strong>
-                    <small>{measurement.contour_mm.length} points</small>
-                  </div>
-                  <div>
-                    <span>4</span>
-                    <strong>CAD ready</strong>
-                    <small>{measurement.width_a_mm.toFixed(1)} × {measurement.height_b_mm.toFixed(1)} mm</small>
+                <div className="actions">
+                  <button className="btn wide" type="button" onClick={() => goTo(nextStep)}>
+                    {nextStep === "frame" ? "Continue to frame" : `Measure the ${otherEye} lens`}
+                  </button>
+                  <div className="secondary-actions">
+                    <button className="link" type="button" onClick={downloadOutline}><Download size={16} aria-hidden="true" /> Download outline</button>
+                    <button className="link" type="button" onClick={resetCapture}><RotateCcw size={15} aria-hidden="true" /> Retake photo</button>
                   </div>
                 </div>
-              )}
-              <p className="calibration-note">
-                {measurement?.status === "measured"
-                  ? "Confirm the orange contour follows the loose lens edge. Real-photo accuracy has not been validated yet."
-                  : "Card calibration succeeded, but the lens contour was not reliable enough to report dimensions."}
-              </p>
-              {measurement?.status === "measured" && <div className="result-actions">
-                <button className="primary-button" type="button" onClick={downloadOutline}><Download size={18} /> Download outline SVG</button>
-                <button className="secondary-button" type="button" onClick={() => { setEye(eye === "left" ? "right" : "left"); setError(""); }}>View {eye === "left" ? "right" : "left"} lens</button>
-              </div>}
-              <button className="secondary-button" type="button" onClick={resetCapture}><RotateCcw size={17} /> Retake this lens</button>
-            </section>
-          ) : (
-            <button
-              className="continue-button"
-              type="button"
-              disabled={!imageFile || isSubmitting}
-              onClick={continueCapture}
-            >
-              {isSubmitting ? "Calibrating and measuring…" : receipt?.status === "retry" ? "Try measurement again" : "Measure lens"}
-              {isSubmitting && <LoaderCircle size={20} className="spinner" />}
-            </button>
-          )}
-        </section>
+                {calibration?.status === "calibrated" && (
+                  <details className="check">
+                    <summary>Check the outline on your photo</summary>
+                    <figure>
+                      <div className="check-image">
+                        <img src={calibration.preview_data_url} alt="Your photo, flattened, with the detected lens outline" />
+                        <svg viewBox={`0 0 ${calibration.preview_width_px} ${calibration.preview_height_px}`} aria-hidden="true">
+                          <polygon className="ref-outline" points={calibration.rectified_card_corners_px.map(point => point.join(",")).join(" ")} />
+                          {calibration.exclusion_zones_px.map((zone, index) => (
+                            <polygon className="ref-outline" key={index} points={zone.map(point => point.join(",")).join(" ")} />
+                          ))}
+                          <polygon className="lens-outline" points={measured.contour_px.map(point => point.join(",")).join(" ")} />
+                        </svg>
+                      </div>
+                      <figcaption>The pink line should sit right on the lens edge. If it doesn’t, retake the photo.</figcaption>
+                    </figure>
+                  </details>
+                )}
+              </>
+            ) : calibrationFailed || measurementFailed ? (
+              <>
+                <div className="problem" role="alert">
+                  <h2>{calibrationFailed ? "The card wasn’t found" : "The lens couldn’t be measured"}</h2>
+                  <p>{calibration?.status === "retry" ? calibration.message : measurement?.status === "retry" ? measurement.message : ""}</p>
+                </div>
+                <div className="actions">
+                  <button className="btn wide" type="button" onClick={() => cameraInput.current?.click()}><Camera size={18} aria-hidden="true" /> Retake photo</button>
+                  <button className="link center" type="button" onClick={() => galleryInput.current?.click()}>Choose another photo</button>
+                </div>
+              </>
+            ) : imageFile ? (
+              <>
+                <p className="lede">Make sure the whole card and the whole lens are in the photo.</p>
+                <div className="actions">
+                  <button className="btn wide" type="button" onClick={measureLens} disabled={isSubmitting}>
+                    {isSubmitting ? <><LoaderCircle size={18} className="spin" aria-hidden="true" /> Measuring</> : "Measure lens"}
+                  </button>
+                  <button className="link center" type="button" onClick={resetCapture} disabled={isSubmitting}>Replace photo</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="lede">The one in front of your {eye} eye. Place it next to a bank card and take a photo from above.</p>
+                <ol className="setup">
+                  <li><strong>Plain table.</strong> Lay the lens flat, next to any bank-size card, back side up.</li>
+                  <li><strong>Close together.</strong> Keep the lens about a finger’s width from the card.</li>
+                  <li><strong>Straight above.</strong> Fill most of the photo with the card and the lens.</li>
+                </ol>
+                <div className="actions">
+                  <button className="btn wide" type="button" onClick={() => cameraInput.current?.click()}><Camera size={18} aria-hidden="true" /> Take photo</button>
+                  <button className="link center" type="button" onClick={() => galleryInput.current?.click()}><ImagePlus size={16} aria-hidden="true" /> Choose from library</button>
+                </div>
+              </>
+            )}
 
-        {leftMeasurement && rightMeasurement && (
-          <section className="frame-panel" aria-label="Frame export">
-            <div className="frame-panel-head">
-              <span>Generated frame</span>
-              <strong>{usingSample ? "Sample lenses (not measured)" : "From your measured lenses"}</strong>
-            </div>
+            {error && <p className="problem inline" role="alert">{error}</p>}
+            <input ref={cameraInput} hidden type="file" accept="image/*" capture="environment" onChange={chooseImage} />
+            <input ref={galleryInput} hidden type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onChange={chooseImage} />
+          </section>
+        </main>
+      ) : leftMeasurement && rightMeasurement ? (
+        <main className="flow frame-flow">
+          <div className="frame-head">
+            <h1 className="title">{usingSample ? "Sample frame" : "Your frame"}</h1>
+            <p className="lede">
+              {usingSample
+                ? "Built from two sample lenses. Measure your own to get a frame that fits them."
+                : "Built around the two lenses you measured. Adjust it, then download it for your 3D printer."}
+            </p>
+          </div>
+          <div className="viewer-tile">
             {glbUrl ? (
-              <Suspense fallback={<div className="viewer-stage"><span className="viewer-loading">Loading 3D viewer…</span></div>}>
-                <FrameViewer
-                  glbUrl={glbUrl}
-                  caption={`Seats R ${(rightMeasurement.width_a_mm + 2 * clearance).toFixed(1)}×${(rightMeasurement.height_b_mm + 2 * clearance).toFixed(1)} · L ${(leftMeasurement.width_a_mm + 2 * clearance).toFixed(1)}×${(leftMeasurement.height_b_mm + 2 * clearance).toFixed(1)} · DBL ${bridgeWidth.toFixed(1)} mm`}
-                />
+              <Suspense fallback={<div className="viewer-stage"><span className="viewer-loading">Loading 3D preview</span></div>}>
+                <FrameViewer glbUrl={glbUrl} caption={`Bridge ${bridgeWidth.toFixed(1)} mm`} />
               </Suspense>
             ) : (
-              <div className="viewer-stage"><span className="viewer-loading">{frameError || "Building 3D preview…"}</span></div>
+              <div className="viewer-stage"><span className="viewer-loading">{frameError || "Building 3D preview"}</span></div>
             )}
-            <div className="cad-controls">
-              <label>
-                <span>Bridge</span>
-                <input type="range" min="12" max="28" step="0.5" value={bridgeWidth} onChange={event => setBridgeWidth(Number(event.target.value))} />
-                <strong>{bridgeWidth.toFixed(1)} mm</strong>
-              </label>
-              <label>
-                <span>Rim</span>
-                <input type="range" min="2.5" max="7" step="0.5" value={rimWidth} onChange={event => setRimWidth(Number(event.target.value))} />
-                <strong>{rimWidth.toFixed(1)} mm</strong>
-              </label>
-              <label>
-                <span>Thickness</span>
-                <input type="range" min="2" max="5" step="0.5" value={frameThickness} onChange={event => setFrameThickness(Number(event.target.value))} />
-                <strong>{frameThickness.toFixed(1)} mm</strong>
-              </label>
-              <label>
-                <span>Clearance</span>
-                <input type="range" min="0" max="1" step="0.1" value={clearance} onChange={event => setClearance(Number(event.target.value))} />
-                <strong>{clearance.toFixed(1)} mm</strong>
-              </label>
-            </div>
-            {fitReport && (
-              <div className="fit-report">
-                <div><span>Fit check</span><strong>{fitReport.averageConfidence >= 0.6 ? "Ready" : "Retake suggested"}</strong></div>
-                <div><span>L/R delta</span><strong>{fitReport.symmetryDelta.toFixed(1)} mm</strong></div>
-                <div><span>Frame width</span><strong>{fitReport.printableWidth.toFixed(1)} mm</strong></div>
+          </div>
+
+          <div className="frame-grid">
+            <section className="card" aria-label="Frame adjustments">
+              <h2>Adjust</h2>
+              {[
+                { label: "Bridge", value: bridgeWidth, set: setBridgeWidth, min: 12, max: 28, step: 0.5, hint: "Gap between the lenses" },
+                { label: "Rim", value: rimWidth, set: setRimWidth, min: 2.5, max: 7, step: 0.5, hint: "Frame width around each lens" },
+                { label: "Thickness", value: frameThickness, set: setFrameThickness, min: 2, max: 5, step: 0.5, hint: "Depth of the frame front" },
+                { label: "Clearance", value: clearance, set: setClearance, min: 0, max: 1, step: 0.1, hint: "Extra room so the lens clicks in" },
+              ].map(control => (
+                <label key={control.label} className="slider">
+                  <span className="slider-head">
+                    <span>{control.label}<small>{control.hint}</small></span>
+                    <output>{control.value.toFixed(1)} mm</output>
+                  </span>
+                  <input type="range" min={control.min} max={control.max} step={control.step} value={control.value}
+                    onChange={event => control.set(Number(event.target.value))} />
+                </label>
+              ))}
+            </section>
+
+            <section className="card" aria-label="Download">
+              <h2>Download</h2>
+              <dl className="summary">
+                <div><dt>Left lens</dt><dd>{mm(leftMeasurement.width_a_mm, 1)} × {mm(leftMeasurement.height_b_mm, 1)} mm</dd></div>
+                <div><dt>Right lens</dt><dd>{mm(rightMeasurement.width_a_mm, 1)} × {mm(rightMeasurement.height_b_mm, 1)} mm</dd></div>
+                <div><dt>Frame width</dt><dd>{mm(leftMeasurement.width_a_mm + rightMeasurement.width_a_mm + bridgeWidth + rimWidth * 4 + 20, 1)} mm</dd></div>
+              </dl>
+              <button className="btn wide" type="button" onClick={() => downloadFrame("assembled")} disabled={isGeneratingFrame}>
+                {isGeneratingFrame ? "Preparing file" : "Download frame (STL)"}
+              </button>
+              <div className="secondary-actions stacked">
+                <button className="link" type="button" onClick={() => downloadFrame("print")} disabled={isGeneratingFrame}><Download size={16} aria-hidden="true" /> Flat print layout</button>
+                <button className="link" type="button" onClick={downloadFitCheck}><Download size={16} aria-hidden="true" /> 1:1 fit check</button>
               </div>
-            )}
-            <div>
-              <span>Bridge</span>
-              <strong>{bridgeWidth.toFixed(1)} mm</strong>
-            </div>
-            <div>
-              <span>Left</span>
-              <strong>{leftMeasurement.width_a_mm.toFixed(1)} × {leftMeasurement.height_b_mm.toFixed(1)} mm</strong>
-            </div>
-            <div>
-              <span>Right</span>
-              <strong>{rightMeasurement.width_a_mm.toFixed(1)} × {rightMeasurement.height_b_mm.toFixed(1)} mm</strong>
-            </div>
-            <button className="primary-button" type="button" onClick={() => downloadFrame("assembled")} disabled={isGeneratingFrame}>
-              <Download size={18} /> {isGeneratingFrame ? "Generating STL…" : "Download monture.stl"}
-            </button>
-            <button className="secondary-button" type="button" onClick={() => downloadFrame("print")} disabled={isGeneratingFrame}>
-              <Download size={18} /> Download print plate (front + temples flat)
-            </button>
-            <p className="frame-disclaimer">Prototype geometry. Lens seats follow the measured outline plus clearance; physical print fit has not been validated.</p>
-            <button className="secondary-button" type="button" onClick={downloadFitCheck}>
-              <Download size={18} /> Download 1:1 fit check
-            </button>
-            <button className="secondary-button" type="button" onClick={copyDemoSummary}>
-              <Check size={18} /> Copy demo summary
-            </button>
-          </section>
-        )}
+              <p className="fine">Print the fit check at 100% and lay your lenses on it first. The blue line is where each lens will sit.</p>
+              {usingSample && <button className="link" type="button" onClick={() => { setUseSample(false); goTo("left"); }}>Measure my own lenses</button>}
+              {error && <p className="problem inline" role="alert">{error}</p>}
+            </section>
+          </div>
+        </main>
+      ) : (
+        <main className="flow empty-flow">
+          <h1 className="title">Your frame</h1>
+          <p className="lede">It’s built from both lens outlines. {!measuredLeft && !measuredRight ? "Measure both lenses first." : `Measure the ${measuredLeft ? "right" : "left"} lens to continue.`}</p>
+          <div className="hero-actions">
+            <button className="btn" type="button" onClick={() => goTo(measuredLeft ? "right" : "left")}>Measure the {measuredLeft ? "right" : "left"} lens</button>
+            <button className="link" type="button" onClick={() => setUseSample(true)}>See a sample frame</button>
+          </div>
+        </main>
+      )}
 
-        {!(leftMeasurement && rightMeasurement) && (
-          <button className="sample-link" type="button" onClick={() => setUseSample(true)}>
-            No marker sheet handy? Preview the frame with sample lenses
-          </button>
-        )}
-        {usingSample && (
-          <button className="sample-link" type="button" onClick={() => setUseSample(false)}>
-            Hide sample frame
-          </button>
-        )}
-
-        <p className="privacy-note"><ShieldCheck size={15} /> Photos are processed in memory and are not saved.</p>
-      </main>
+      <footer className="footer">Photos are measured in memory and never stored.</footer>
     </div>
   );
 }
