@@ -433,18 +433,14 @@ def _inset_polygon(contour_mm: np.ndarray) -> np.ndarray | None:
 
 
 def _oriented_boxing_dimensions(contour_mm: np.ndarray) -> tuple[float, float]:
+    """Boxing size of the lens on its own axes: A is the long (horizontal-when-worn) side,
+    B the short side. Uses the minimum-area rectangle, so it doesn't depend on how the lens
+    was rotated on the sheet or next to the card (a lens laid down sideways still gets A > B)."""
     rect = cv2.minAreaRect(contour_mm.astype(np.float32).reshape(-1, 1, 2))
     side_a, side_b = sorted(rect[1], reverse=True)
     if side_a <= 0 or side_b <= 0:
         return 0.0, 0.0
-
-    box = cv2.boxPoints(rect)
-    edges = [(box[(i + 1) % 4] - box[i]) for i in range(4)]
-    major = max(edges, key=lambda edge: float(np.linalg.norm(edge)))
-    # Width A follows the lens' own horizontal direction, not the photo/sheet axes.
-    if abs(float(major[0])) >= abs(float(major[1])):
-        return float(side_a), float(side_b)
-    return float(side_b), float(side_a)
+    return float(side_a), float(side_b)
 
 
 def _finalize(
