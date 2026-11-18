@@ -23,6 +23,30 @@ const STEPS: { id: Exclude<Step, "home">; label: string }[] = [
   { id: "frame", label: "Frame" },
 ];
 
+/** Phone cameras often save 5–12 MB photos. Re-encode big ones in the browser (max 3000 px,
+ *  JPEG 92%) so they fit the 4 MB upload limit; ~3000 px is still far more detail than needed. */
+async function shrinkPhoto(file: File): Promise<File> {
+  if (file.size <= MAX_FILE_SIZE) return file;
+  try {
+    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const scale = Math.min(1, 3000 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    for (const quality of [0.92, 0.85, 0.75]) {
+      const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, "image/jpeg", quality));
+      if (blob && blob.size <= MAX_FILE_SIZE) {
+        return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
+      }
+    }
+  } catch {
+    // Browser can't decode this format (e.g. HEIC outside Safari); fall through to the size check.
+  }
+  return file;
+}
+
 function normalizeContour(points: Point[]) {
   const xs = points.map(point => point[0]);
   const ys = points.map(point => point[1]);
@@ -234,16 +258,17 @@ function App() {
   const previewUrl = useMemo(() => (imageFile ? URL.createObjectURL(imageFile) : ""), [imageFile]);
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
-  function chooseImage(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+  async function chooseImage(event: ChangeEvent<HTMLInputElement>) {
+    const picked = event.target.files?.[0];
     event.target.value = "";
-    if (!file) return;
-    if (!["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"].includes(file.type)) {
+    if (!picked) return;
+    if (!["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"].includes(picked.type)) {
       setError("This file type isn't supported. Use a JPG, PNG, HEIC or WebP photo.");
       return;
     }
+    const file = await shrinkPhoto(picked);
     if (file.size > MAX_FILE_SIZE) {
-      setError("This photo is over 4 MB. Take it again at a lower resolution, or choose a smaller original.");
+      setError("This photo is over 4 MB and couldn't be made smaller here. Take it again at a lower resolution.");
       return;
     }
     setError("");
