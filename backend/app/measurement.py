@@ -236,6 +236,22 @@ def _sheet_zone_candidates(rectified: np.ndarray, calibration: CalibrationReady)
     return sorted(candidates, key=lambda candidate: (candidate.area, candidate.score), reverse=True)
 
 
+def _prune_spurs(contour: np.ndarray, shape: tuple[int, int], calibration: CalibrationReady) -> np.ndarray | None:
+    """Fill the outline and open it with a ~1.5 mm disc. Paper texture and shadow specks can
+    join the rim as thin branches; the convex envelope later would stretch over them and make
+    the lens look several mm too big. Opening cuts anything thinner than the disc."""
+    mask = np.zeros(shape, np.uint8)
+    cv2.drawContours(mask, [contour.astype(np.int32)], -1, 255, -1)
+    radius = max(2, round(1.5 / calibration.millimetres_per_pixel))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * radius + 1,) * 2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    found, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not found:
+        return None
+    best = max(found, key=cv2.contourArea)
+    return best if len(best) >= 40 else None
+
+
 def _snap_to_dark_ridge(gray: np.ndarray, contour: np.ndarray, calibration: CalibrationReady) -> np.ndarray:
     """Move each contour point along the radial direction to the darkest pixel
     of the rim line (sub-pixel), searching inward from the outer band edge."""
@@ -255,7 +271,7 @@ def _snap_to_dark_ridge(gray: np.ndarray, contour: np.ndarray, calibration: Cali
     rows = np.arange(len(points))
     left, mid, right = profile[rows, idx - 1], profile[rows, idx], profile[rows, idx + 1]
     denom = left - 2 * mid + right
-    offset = np.where(np.abs(denom) > 1e-6, 0.5 * (left - right) / denom, 0.0)
+    offset = np.divide(0.5 * (left - right), denom, out=np.zeros_like(denom), where=np.abs(denom) > 1e-6)
     shift = steps[idx] + np.clip(offset, -1, 1)
     # A few outliers (glare, print) shouldn't drag the outline: median-filter the shifts.
     padded = np.concatenate([shift[-3:], shift, shift[:3]])
@@ -315,6 +331,9 @@ def _sheet_dark_rim_candidates(rectified: np.ndarray, calibration: CalibrationRe
         if len(contour) < 80:
             continue
         contour = contour + np.array([[[x0, y0]]], dtype=np.int32)
+        contour = _prune_spurs(contour, gray.shape, calibration)
+        if contour is None:
+            continue
         contour = _snap_to_dark_ridge(smooth_gray, contour, calibration)
         bx, by, bw, bh = cv2.boundingRect(contour)
         size_mm = np.array([bw * mm, bh * mm])

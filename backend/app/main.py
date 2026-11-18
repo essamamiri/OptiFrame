@@ -232,7 +232,13 @@ def calibrate_with_supported_references(image: Image.Image) -> CalibrationReady 
             preview_height_px=sheet.preview_height_px,
             preview_data_url=sheet.preview_data_url,
         )
-    return calibrate(image)
+    card = calibrate(image)
+    if card.status == "retry" and sheet.reason != "markers_missing":
+        # The sheet's markers were seen but couldn't be used. Say that, instead of a card
+        # message that makes no sense for someone using the sheet.
+        reason = {"markers_cropped": "card_cropped", "image_blurry": "image_blurry"}.get(sheet.reason, "low_confidence")
+        return CalibrationRetry(reason=reason, message=sheet.message)
+    return card
 
 
 static_dir = Path(__file__).resolve().parents[2] / "frontend" / "dist"

@@ -505,7 +505,7 @@ function App() {
             ) : calibrationFailed || measurementFailed ? (
               <>
                 <div className="problem" role="alert">
-                  <h2>{calibrationFailed ? "The card wasn’t found" : "The lens couldn’t be measured"}</h2>
+                  <h2>{calibrationFailed ? "The photo couldn’t be measured" : "The lens couldn’t be measured"}</h2>
                   <p>{calibration?.status === "retry" ? calibration.message : measurement?.status === "retry" ? measurement.message : ""}</p>
                 </div>
                 <div className="actions">
