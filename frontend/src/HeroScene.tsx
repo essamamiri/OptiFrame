@@ -39,7 +39,7 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
     const camera = new THREE.PerspectiveCamera(28, 1, 0.005, 5);
 
     const frameMaterial = new THREE.MeshPhysicalMaterial({
-      color: "#16110f", roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.1, transparent: true,
+      color: "#16110f", roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.1,
     });
     // A photo studio for the glass to reflect: dark walls, three soft light boxes. This is
     // what makes clear lenses read as glass in product renders (dark/light bands on the curve).
@@ -62,7 +62,7 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
     // Real clear glass: refracts whatever is behind it (frame, temples, page) and reflects the studio.
     const glass = new THREE.MeshPhysicalMaterial({
       color: 0xffffff, metalness: 0, roughness: 0, transmission: 1, thickness: 0.0012, ior: 1.5,
-      specularIntensity: 1, envMap: studio, envMapIntensity: 1.1, side: THREE.DoubleSide,
+      specularIntensity: 1, envMap: studio, envMapIntensity: 0.45, side: THREE.DoubleSide,
     });
     glass.toneMapped = false;
 
@@ -202,13 +202,13 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
           free * lens.side * 0.14,
         );
       }
-      frameMaterial.opacity = rise;
-      const fading = rise < 0.999;
-      if (frameMaterial.transparent !== fading) { frameMaterial.transparent = fading; frameMaterial.needsUpdate = true; }
-      frameMaterial.depthWrite = rise > 0.98;
-      for (const part of frameParts) part.visible = rise > 0.01;
-      root.position.y = 0;
-      for (const part of frameParts) part.position.y = (1 - rise) * -0.07;
+      // The frame stays fully solid (glass can only see solid things behind it) and arrives by
+      // rising up and growing into place instead of fading in.
+      for (const part of frameParts) {
+        part.visible = rise > 0.01;
+        part.position.y = (1 - rise) * -0.09;
+        part.scale.setScalar(0.82 + 0.18 * rise);
+      }
 
       // Camera: straight on for the loose lenses, swinging to a three-quarter hero angle.
       const yaw = THREE.MathUtils.lerp(0.0, 0.62, turn) + smoothPointer.x * 0.25;
