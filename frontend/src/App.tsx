@@ -531,6 +531,7 @@ function App() {
               <>
                 <div className="problem" role="alert">
                   <h2>{calibrationFailed ? "The photo couldn’t be measured" : "The lens couldn’t be measured"}</h2>
+                  <p className="problem-tip">Try putting the lens and card on a sheet of white paper. It’s the fix for most failed photos.</p>
                   <p>{calibration?.status === "retry" ? calibration.message : measurement?.status === "retry" ? measurement.message : ""}</p>
                 </div>
                 <div className="actions">
@@ -550,11 +551,11 @@ function App() {
               </>
             ) : (
               <>
-                <p className="lede">The one in front of your {eye} eye. Place it next to a bank card and take a photo from above.</p>
+                <p className="lede">The one in front of your {eye} eye. Put it next to a bank card on white paper and take a photo from above.</p>
                 <ol className="setup">
-                  <li><strong>Plain table.</strong> Lay the lens flat, next to any bank-size card, back side up.</li>
+                  <li><strong>White paper.</strong> Put the lens and any bank-size card (debit, credit, transit, ID) on a sheet of white printer paper.</li>
                   <li><strong>Close together.</strong> Keep the lens about a finger’s width from the card.</li>
-                  <li><strong>Straight above.</strong> Fill most of the photo with the card and the lens.</li>
+                  <li><strong>Straight above.</strong> Keep the card and lens fully inside the paper and the photo, with some space around them.</li>
                 </ol>
                 <div className="actions">
                   <button className="btn wide" type="button" onClick={() => cameraInput.current?.click()}><Camera size={18} aria-hidden="true" /> Take photo</button>
