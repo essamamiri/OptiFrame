@@ -64,6 +64,7 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
       color: 0xffffff, metalness: 0, roughness: 0, transmission: 1, thickness: 0.0012, ior: 1.5,
       specularIntensity: 1, envMap: studio, envMapIntensity: 1.1, side: THREE.DoubleSide,
     });
+    glass.toneMapped = false;
 
     // The lens's cut edge: a soft bright band around the glass, so each lens reads as a solid
     // piece of glass with thickness whether it floats alone or sits in the frame.
@@ -177,7 +178,7 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
       //   .42 → .62 the lenses straighten and line up in front of their rims
       //   .62 → .74 they push straight back and click into place (small overshoot)
       //   .76 → 1   the finished pair turns to a three-quarter view
-      const rise = span(p, 0.3, 0.58);
+      const rise = span(p, 0.3, 0.46);
       const align = span(p, 0.42, 0.62);
       const push = clamp01((p - 0.62) / 0.12);
       const turn = span(p, 0.76, 1);
@@ -186,12 +187,14 @@ export default function HeroScene({ glbUrl, progress }: { glbUrl: string; progre
       const back = (v: number) => { const c = 1.2; const u = v - 1; return 1 + (c + 1) * u * u * u + c * u * u; };
       const seated = push <= 0 ? 0 : back(push);
 
+      edgeGlass.opacity = 0.75 * (1 - Math.min(1, seated));
+      edgeGlass.visible = edgeGlass.opacity > 0.01;
       for (const lens of lenses) {
         const free = 1 - align;
         lens.mesh.position.set(
           lens.home.x + lens.side * 0.014 * free,
           lens.home.y + free * (0.008 + Math.sin(t * 1.1 + lens.side) * 0.003 * idle),
-          lens.home.z + 0.0032 + 0.031 * (1 - seated),
+          lens.home.z + 0.034 * (1 - seated),
         );
         lens.mesh.rotation.set(
           free * (0.3 + Math.sin(t * 0.8 + lens.side) * 0.07 * idle),
