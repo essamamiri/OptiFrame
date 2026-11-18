@@ -46,10 +46,10 @@ class CalibrationReady(BaseModel):
 
 
 MESSAGES = {
-    "card_missing": "We could not find the reference card. Place one blank 85.60 × 53.98 mm card beside the lens on a plain contrasting surface, keep all four corners visible, and retake the photo.",
+    "card_missing": "We couldn’t find the card. Put any bank-size card (debit, credit, transit, ID) next to the lens on a plain sheet of white paper, keep all four corners in the photo with some space around them, and retake it.",
     "card_cropped": "The card may be cropped or too close to the photo edge. Move back until the complete card and a clear margin around all four corners are visible, then retake the photo.",
     "image_blurry": "The card edges look blurry. Clean the camera, add even light, tap the card to focus, hold still, and retake the photo.",
-    "low_confidence": "We cannot calibrate this photo reliably. Use only one blank standard-size card, remove other rectangular objects and glare, keep card and lens on the same flat surface, and retake from nearly overhead with clear, contrasting edges.",
+    "low_confidence": "We couldn’t measure this photo reliably. Use one bank-size card, move other rectangular objects out of the photo, tilt the card slightly if there’s a strong glare, keep card and lens on the same flat surface, and shoot from straight above.",
 }
 
 
@@ -93,7 +93,9 @@ def _fit_corners(contour: np.ndarray, quad: np.ndarray) -> np.ndarray | None:
             return None
         corners.append(intersection[:2] / intersection[2])
     fitted = np.float32(corners)
-    if np.max(np.linalg.norm(fitted - quad, axis=1)) > 15:
+    # Rounded card corners (r ≈ 3 mm) sit inside the fitted corner, more so in close-up photos.
+    shortest = float(np.min(np.linalg.norm(np.roll(quad, -1, axis=0) - quad, axis=1)))
+    if np.max(np.linalg.norm(fitted - quad, axis=1)) > max(15, .08 * shortest):
         return None
     return fitted
 
@@ -137,6 +139,7 @@ def calibrate(image: Image.Image) -> CalibrationReady | CalibrationRetry:
     smooth = cv2.GaussianBlur(gray, (5, 5), 1)
     edges = cv2.Canny(smooth, 30, 90)
     _, binary = cv2.threshold(smooth, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    edge_points = np.flip(np.argwhere(edges > 0), axis=1).reshape(-1, 1, 2).astype(np.int32)
     candidates: list[Candidate] = []
     cropped = False
     plausible = False
@@ -151,7 +154,18 @@ def calibrate(image: Image.Image) -> CalibrationReady | CalibrationRetry:
             perimeter = cv2.arcLength(contour, True)
             quad = cv2.approxPolyDP(contour, .025 * perimeter, True)
             if len(quad) != 4 or not cv2.isContourConvex(quad):
-                continue
+                # Glare streaks, logos or stripes touching the card's edge add a few extra
+                # vertices. Fall back to the convex outline, which ignores those dents.
+                hull = cv2.convexHull(contour)
+                for epsilon in (.02, .03, .04, .05):
+                    quad = cv2.approxPolyDP(hull, epsilon * cv2.arcLength(hull, True), True)
+                    if len(quad) == 4:
+                        break
+                if len(quad) != 4 or not cv2.isContourConvex(quad):
+                    continue
+                # Keep the original contour for line fitting (its edge points are dense); the
+                # fit only uses points close to each edge, so the dents are ignored there too.
+                area = cv2.contourArea(hull)
             quad = _ordered(quad.reshape(4, 2))
             lengths = np.linalg.norm(np.roll(quad, -1, axis=0) - quad, axis=1)
             ratio = (lengths[0] + lengths[2]) / (lengths[1] + lengths[3])
@@ -174,6 +188,10 @@ def calibrate(image: Image.Image) -> CalibrationReady | CalibrationRetry:
                 continue
             fitted = _fit_corners(contour, quad)
             if fitted is None:
+                # Printed stripes or glare can eat into the thresholded outline. The real card
+                # edge is still a crisp line in the edge map, so fit the four sides to that.
+                fitted = _fit_corners(edge_points, quad)
+            if fitted is None:
                 continue
             if (np.any(fitted < margin) or np.any(fitted[:, 0] > w - 1 - margin)
                     or np.any(fitted[:, 1] > h - 1 - margin)):
@@ -187,7 +205,11 @@ def calibrate(image: Image.Image) -> CalibrationReady | CalibrationRetry:
             inner_quad = fitted.mean(axis=0) + .8 * (fitted - fitted.mean(axis=0))
             cv2.fillConvexPoly(interior, inner_quad.astype(np.int32), 255)
             pixels = gray[interior > 0]
-            if np.percentile(pixels, 90) - np.percentile(pixels, 10) > 40:
+            # Real cards are printed (logos, stripes, chip), so a busy interior can't reject them
+            # on its own. Only reject it when the outline is also far from the card's shape,
+            # which is what lens rims and random clutter look like.
+            busy = np.percentile(pixels, 90) - np.percentile(pixels, 10) > 40
+            if busy and abs(ratio - CARD_WIDTH_MM / CARD_HEIGHT_MM) > .18:
                 continue
             score = float(.5 * min(contrast / 80, 1) + .3 * min(sharpness / .35, 1)
                           + .2 * max(0, 1 - abs(ratio - CARD_WIDTH_MM / CARD_HEIGHT_MM) / .7))
