@@ -273,6 +273,21 @@ def _snap_to_dark_ridge(gray: np.ndarray, contour: np.ndarray, calibration: Cali
     denom = left - 2 * mid + right
     offset = np.divide(0.5 * (left - right), denom, out=np.zeros_like(denom), where=np.abs(denom) > 1e-6)
     shift = steps[idx] + np.clip(offset, -1, 1)
+    # Tinted / dark lenses have no thin rim line: the profile drops from paper to dark and
+    # stays dark. Snapping to the minimum there would pull the outline millimetres inside the
+    # lens, so for those points use the step edge (where it first gets halfway dark) instead.
+    paper = profile[:, 0]
+    darkest = profile[rows, best]
+    inner = profile[:, -max(3, len(steps) // 4):].mean(axis=1)
+    is_step = (inner - darkest) < 0.35 * np.maximum(paper - darkest, 1e-3)
+    halfway = (paper + darkest) / 2
+    below = profile < halfway[:, None]
+    first = np.where(below.any(axis=1), below.argmax(axis=1), best)
+    j = np.clip(first, 1, len(steps) - 1)
+    hi, lo = profile[rows, j - 1], profile[rows, j]
+    frac = np.divide(hi - halfway, hi - lo, out=np.zeros_like(hi), where=np.abs(hi - lo) > 1e-6)
+    step_shift = steps[j - 1] + np.clip(frac, 0, 1)
+    shift = np.where(is_step, step_shift, shift)
     # A few outliers (glare, print) shouldn't drag the outline: median-filter the shifts.
     padded = np.concatenate([shift[-3:], shift, shift[:3]])
     shift = np.median(np.lib.stride_tricks.sliding_window_view(padded, 7), axis=1)
