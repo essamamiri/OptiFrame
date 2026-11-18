@@ -109,11 +109,23 @@ def _edge_sharpness(gray: np.ndarray, contour: np.ndarray) -> float:
 
 
 def _candidate_contours(rectified: np.ndarray, calibration: CalibrationReady) -> tuple[list[Candidate], bool]:
+    # A clear lens on a light background has a faint edge; with the default thresholds its
+    # outline can break into an open chain. If nothing closes, retry with softer thresholds.
+    any_cropped = False
+    for scale in (1.0, .45, .25):
+        found, cropped = _candidate_contours_at(rectified, calibration, scale)
+        any_cropped = any_cropped or cropped
+        if found:
+            return found, cropped
+    return [], any_cropped
+
+
+def _candidate_contours_at(rectified: np.ndarray, calibration: CalibrationReady, scale: float) -> tuple[list[Candidate], bool]:
     gray = cv2.cvtColor(rectified, cv2.COLOR_RGB2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 1)
     median = float(np.median(blurred))
-    lower = int(max(12, .45 * median))
-    upper = int(min(240, max(lower + 30, 1.35 * median)))
+    lower = int(max(8, .45 * median * scale))
+    upper = int(min(240, max(lower + 20, 1.35 * median * scale)))
     edges = cv2.Canny(blurred, lower, upper)
     close_radius = max(1, round(.45 / calibration.millimetres_per_pixel))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * close_radius + 1,) * 2)

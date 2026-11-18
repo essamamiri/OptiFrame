@@ -1,194 +1,125 @@
 # OptiFrame
 
-OptiFrame is a hackathon prototype that turns phone photos of loose recycled lenses into measured lens contours, printable fit checks, and a generated eyeglass-frame STL.
+**Take a photo of your old lenses next to a bank card and get a 3D-printable frame that fits them.**
 
-The app is built for the contest workflow: place one loose lens on the marker sheet, take a photo, repeat for the other lens, then export CAD files for a custom frame.
+[**Try it live → optiframe.onrender.com**](https://optiframe.onrender.com)
 
-## Demo Links
+![OptiFrame landing page](docs/images/hero.png)
 
-- Public app: add the deployed HTTPS URL here before judging.
-- Repository: https://github.com/essamamiri/OptiFrame
-- QR code: generate from the public app URL and show it during the demo.
+Glasses usually get thrown out because the frame breaks, not because the lenses are bad. Getting a frame cut for existing lenses means an optician, a tracer machine and a bill. OptiFrame does the same job with a phone camera: it measures each lens to the millimetre from one photo, then generates a frame whose rims are shaped from those exact outlines, ready to print.
 
-## Install On Phone
+Built for the SN-SF OptiFrame challenge at the CodeML hackathon.
 
-After deployment, open the HTTPS app URL on the phone.
+---
 
-Android Chrome:
+## How it works
 
-1. Open the app URL.
-2. Tap the browser menu.
-3. Tap **Install app** or **Add to Home screen**.
+| 1. Photograph | 2. Measure | 3. Print |
+| --- | --- | --- |
+| Put the lens and any bank-size card on white paper and take one photo from above. | The app finds the card, flattens the photo, traces the lens edge and gives width A, height B and the full outline in mm. | A parametric frame is built around both outlines and exported as an STL, plus a 1:1 paper fit check. |
 
-iPhone Safari:
+<p>
+  <img src="docs/images/measured.png" width="68%" alt="Measured lens with dimension lines and the outline drawn on the photo">
+  <img src="docs/images/mobile-measured.png" width="25%" alt="The same result on a phone">
+</p>
 
-1. Open the app URL in Safari.
-2. Tap Share.
-3. Tap **Add to Home Screen**.
+![Generated frame with adjustment sliders and downloads](docs/images/frame.png)
 
-OptiFrame includes a web app manifest, app icons, iOS home-screen tags, and a service worker, so it can be installed like a PWA.
+## The pipeline
 
-## Fast Deployment
-
-Recommended for the hackathon: deploy as one Docker web service on Render.
-
-1. Push the latest commits to GitHub.
-2. Go to Render and create a new **Blueprint** or **Web Service** from `https://github.com/essamamiri/OptiFrame`.
-3. Use the included `render.yaml` / `Dockerfile`.
-4. Wait for the build to finish.
-5. Open the HTTPS URL Render gives you.
-6. Add that URL to this README and generate a QR code for the demo.
-
-The Docker deployment builds the React frontend, copies it into the Python service, and serves both the mobile app and `/api/*` from the same HTTPS domain.
-
-## What It Does
-
-- Calibrates photos from a 4-marker ArUco capture sheet.
-- Measures loose lens width A, height B, perimeter, and contour.
-- Works with real phone photos, including rotated lenses and mild perspective.
-- Shows the measured contour directly on the corrected top-down preview.
-- Captures left and right lenses separately.
-- Exports lens outlines as SVG.
-- Generates a matching frame STL from the measured lens contours.
-- Includes CAD controls for rim thickness, depth, bridge width, tab length, and lens clearance.
-- Exports a 1:1 fit-check SVG so the lens can be compared before printing.
-- Shows a judge-facing checklist and step-by-step capture pipeline inside the app.
-
-## Why It Is Different
-
-Most AI hackathon demos stop at detection. OptiFrame connects the full pipeline:
-
-photo -> calibrated measurement -> contour extraction -> fit validation -> CAD export.
-
-That makes it easier to explain live: "I photographed these loose recycled lenses, the app measured them, and this downloadable STL was generated from those exact contours."
-
-## Project Structure
-
-```text
-backend/    FastAPI + OpenCV measurement and STL generation
-frontend/   React + Vite mobile-first capture interface
-docs/       Capture-sheet PDF
-vercel.json Vercel service routing
+```mermaid
+flowchart LR
+    A[Phone photo] --> B{Reference?}
+    B -->|ArUco sheet| C[4-marker homography]
+    B -->|Bank card| D[Card detection<br/>85.60 × 53.98 mm]
+    C --> E[Rectified top-down image<br/>known mm per pixel]
+    D --> E
+    E --> F[Lens edge detection<br/>OpenCV + small U-Net fallback]
+    F --> G[A, B, perimeter,<br/>contour in mm]
+    G --> H[Parametric frame<br/>manifold3d sweep]
+    H --> I[STL + 1:1 fit check]
 ```
 
-## Consignes Checklist
+**Calibration.** The card is the ruler. A standard ID-1 card is exactly 85.60 × 53.98 mm, so once its four corners are found, a perspective transform maps the photo to a flat, top-down view with a known scale. Real cards are printed, glossy and have rounded corners, so the detector fits each side to the sharp straight edge in the image instead of trusting the rough outline, and ignores dents from logos or glare. There's also a printable 4-marker ArUco sheet (`docs/capture-sheet.pdf`) for when you want the most accurate result.
 
-| Requirement | Status |
-| --- | --- |
-| Mobile web app | Implemented with React/Vite, mobile-first UI |
-| Camera capture + file fallback | Implemented |
-| Known reference and perspective correction | Implemented with 4-marker ArUco sheet |
-| Lens segmentation / contour | Implemented with ML mask attempt plus deterministic OpenCV fallback |
-| A, B, perimeter in mm | Implemented |
-| Control image with contour overlay | Implemented |
-| Left and right lens flow | Implemented |
-| 1:1 SVG contour export | Implemented |
-| Parametric frame from two contours | Implemented |
-| Bridge width control, default 18 mm | Implemented |
-| Tenons/tabs and bridge | Implemented in STL generator |
-| STL download | Implemented as `monture.stl` |
-| In-app preview | Implemented as top and angled frame previews |
-| Installable phone app | Implemented as PWA; install from Android Chrome or iOS Safari |
-| Public HTTPS URL + QR code | Must be added after deployment |
-| Real-phone validation | Must be repeated before judging |
-| Physical print/clip validation | Bonus, not yet confirmed |
+**Lens edge.** This is the hard part, because a clear lens is mostly invisible. From above, you basically only see its edge as a thin dark line. The detector:
+1. uses black-hat morphology to pull out thin dark lines and ignore broad glare,
+2. keeps only the outer boundary and cuts off thin stray branches from paper texture or shadows (they used to make the outline bulge several mm),
+3. snaps every point onto the centre of the dark rim line with sub-pixel accuracy, or onto the paper-to-dark step for tinted lenses, which have no thin line.
 
-## Capture Device
+If the classic pipeline isn't confident, a small U-Net (~0.5M params, ONNX, runs on CPU) trained on synthetic lens images takes over.
 
-Use the printed marker sheet in `docs/capture-sheet.pdf`.
+**Measurements.** Width A and height B are the boxing dimensions opticians use, taken on the lens's own axes, so it doesn't matter how the lens was rotated in the photo.
 
-1. Print the sheet at 100%.
-2. Place one loose lens inside the open central area.
-3. Keep all four black markers fully visible.
-4. Take the photo from above with no blur and minimal glare.
-5. Repeat for the other lens.
+**Frame.** The rim is built the way eyewear CAD does it: a rounded profile with a V-groove for the lens bevel, swept along the measured outline. The groove bottom is exactly the lens outline plus the clearance you choose, so the styling can never change the fit. Bridge, nose pads, end pieces and a 3-knuckle hinge (the pin is a piece of 1.75 mm filament) are unioned into one watertight mesh with manifold3d. Temples print flat as separate parts.
 
-The app intentionally supports loose lenses only. It does not ask for photos of lenses inside an existing frame.
+## Accuracy
 
-## Step-By-Step Pipeline
+- On synthetic lenses of known size, error is **under 0.3 mm** for both clear and tinted lenses, across rotations and perspective.
+- On real lenses photographed on the marker sheet, the results matched a ruler.
+- `backend/ml/eval_sheet.py` grades the live pipeline against caliper measurements: add photos and their true sizes to `ml/data/sheet/manifest.csv` and it prints per-lens error and any constant bias.
 
-For each lens, the app shows:
+Limitation: the card has to be on a plain light background (a sheet of white paper works). A blue card on dark wood is almost the same brightness in grayscale, so the edges disappear.
 
-1. Reference detection: the ArUco sheet gives scale and perspective.
-2. Redressed image: the photo is corrected to top-down geometry.
-3. Lens contour: the detected contour is drawn on the preview.
-4. CAD-ready dimensions: A, B, perimeter, contour points, SVG, fit-check SVG, and STL frame export.
+## Tech stack
 
-## Data And AI
+**Backend:** Python, FastAPI, OpenCV, NumPy, ONNX Runtime, manifold3d, pyclipper
+**Frontend:** React, TypeScript, Vite, Three.js (scroll-driven 3D landing, live frame preview)
+**ML:** PyTorch-trained Tiny U-Net exported to ONNX, synthetic data generator (oval, round, wayfarer, aviator, cat-eye with glare, shadow and blur)
+**Deploy:** a single Docker service on Render that serves the app and the API from one HTTPS domain. Installable as a PWA.
+**Tests:** 130 pytest tests covering calibration, measurement, ML fallback, frame geometry and the API
 
-The app currently uses a small local ONNX lens-mask model when available, then falls back to a deterministic OpenCV contour detector tuned on synthetic tests and real phone photos.
-
-Data sources:
-
-- Synthetic marker-sheet and lens fixtures generated by `backend/tests/synthetic.py`.
-- User-captured loose lens photos for local validation.
-- No personal data, faces, names, prescriptions, or WhatsApp-compressed images are used.
-
-Model/source notes:
-
-- `backend/ml/lens_unet.onnx` is included locally for the prototype.
-- Training utilities are in `backend/ml/`.
-- OpenCV, NumPy, Pillow, FastAPI, React, Vite, and Lucide are used through their normal open-source licenses.
-
-Known weakness: the AI/data part is a prototype, not a large validated segmentation dataset. The strongest current value is the full working pipeline from photo to measurement to STL.
-
-## Run Locally
-
-Backend:
+## Run it locally
 
 ```bash
+# backend
 cd backend
-python -m venv .venv
-source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 uvicorn app.main:app --reload --port 8765
-```
 
-Frontend, in a second terminal:
-
-```bash
+# frontend (second terminal)
 cd frontend
 npm ci
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Run the tests with `cd backend && python -m pytest -q`.
 
-## Verify
+## Project structure
 
-```bash
-cd backend
-.venv/bin/python -m pytest -q
-
-cd ../frontend
-npm run build
+```text
+backend/
+  app/
+    calibration.py   bank card detection + perspective correction
+    aruco_sheet.py   marker-sheet calibration
+    measurement.py   lens edge detection and A / B / perimeter
+    ml_segment.py    ONNX U-Net fallback
+    frame.py         parametric frame + STL / GLB export
+    main.py          FastAPI routes
+  ml/                U-Net training, synthetic data, eval script
+  tests/             pytest suite
+frontend/
+  src/App.tsx        capture flow (left lens → right lens → frame)
+  src/HeroScene.tsx  scroll-driven Three.js landing scene
+  src/FrameViewer.tsx interactive 3D frame preview
+docs/capture-sheet.pdf
 ```
 
-Current local backend result: `95 passed`.
+## Privacy
 
-## Five-Minute Demo Script
+Photos are processed in memory and never stored.
 
-1. Open the HTTPS app from the QR code on a phone.
-2. Show the printed capture sheet and one loose lens.
-3. Capture the left lens and point at the top-down contour overlay.
-4. Capture the right lens and show A, B, and perimeter.
-5. Open the frame panel, adjust bridge or clearance, then download `monture.stl`.
-6. Export the 1:1 fit-check SVG and explain that it validates lens fit before printing.
-7. State the honest limit: final physical clip fit still needs real printing and caliper validation.
+## Team
 
-## API
+CodeML hackathon team:
+- **Essam Amiri** · [GitHub](https://github.com/essamamiri) · [LinkedIn](https://www.linkedin.com/in/essamamiri/)
+- **Arman Abdollahian Sohi** · [GitHub](https://github.com/armansohi04) · [LinkedIn](https://www.linkedin.com/in/arman-abdollahian-sohi-108647281/)
+- **Luis Jaimes Salazar** · [GitHub](https://github.com/Ljaimes06) · [LinkedIn](https://www.linkedin.com/in/luis-jaimes-salazar-a4b356342/)
+- **Samer Odeh** · [GitHub](https://github.com/samerodeh) · [LinkedIn](https://www.linkedin.com/in/samer-odeh-1265b1343/)
 
-- `GET /api/health`
-- `POST /api/captures`
-- `POST /api/frame-stl`
+## What's next
 
-`/api/captures` accepts a photo plus the selected eye (`left` or `right`) and returns calibration data, measurements, preview overlay data, and contour coordinates.
-
-`/api/frame-stl` accepts the measured left/right contours and CAD parameters, then returns a downloadable ASCII STL.
-
-## Notes
-
-- Photos are processed in memory.
-- The intended capture method is loose contact/lens photos only, without the lens inside a frame.
-- Real-world accuracy depends on lighting, glare, sharp focus, marker visibility, and the lens edge being visible.
-- This is a hackathon prototype, not a certified medical or optical manufacturing tool.
+- Collect a real-photo dataset and fine-tune the U-Net on it
+- Measure pupillary distance from a selfie to place the lenses correctly
+- Print-and-fit testing with more lens shapes, and published results
